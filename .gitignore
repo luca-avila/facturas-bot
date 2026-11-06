@@ -22,3 +22,6 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# Real supplier documents used as extraction samples. The repo is public: never commit them
+/samples/
