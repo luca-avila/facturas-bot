@@ -16,9 +16,9 @@ Why: two implementations end up showing different debts.
 Check: arithmetic on amounts or comparisons of due dates in `frontend/`, or a status or balance column in a migration.
 
 ### D2. Financial changes write `audit_log` in the same transaction
-This covers documents, payments, applications and supplier terms.
-Why: with a shared account, this log is the only way to know what changed.
-Check: a write to those tables with no audit entry in the same transaction.
+This covers documents, payments, applications and supplier terms. The entry carries the acting user in `user_id`, which stays empty only for changes made by the worker.
+Why: it's the only record of who changed a financial value and what it was before.
+Check: a write to those tables with no audit entry in the same transaction, or an entry without `user_id` for a change a person made.
 
 ### D3. Reads exclude soft-deleted rows
 Every query on `documents` or `payments` filters on `deleted_at`, unless it's explicitly meant to see deleted rows.

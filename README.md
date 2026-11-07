@@ -38,7 +38,7 @@ flowchart LR
 - Manual entry of documents, including each supplier's opening balance
 - Dashboard with pending, overdue and total debt per supplier
 - Payments that can settle many documents, in full or in part, and credit on account
-- A single login for the restaurant
+- One account per person, so the app records who uploaded, reviewed or paid what
 
 **Planned** — see [Roadmap](#roadmap).
 
@@ -57,7 +57,7 @@ A few choices worth explaining:
 - **LLM extraction instead of parsing QR codes.** Argentine electronic invoices include a QR code with some of the data, but delivery notes don't, and the QR doesn't carry line items or due dates anyway. Photos taken by hand + an LLM cover every document type with a single pipeline.
 - **Checks decide, a person reviews when it matters.** The model's output is a *suggestion*, and deterministic checks decide what happens to it. Anything that fails waits for a person. Anything that passes counts right away but stays marked *Sin revisar*, so the daily work doesn't depend on reviewing every document.
 - **Due dates come from the supplier's term.** The date printed next to the CAE looks like a due date but isn't one, and several invoices print nothing else. So a due date is always the issue date plus the term agreed with the supplier. A new supplier's first document waits in the error tray until someone sets that term.
-- **One restaurant, one account.** No multi-tenancy and no roles. A second restaurant would be a separate deployment.
+- **One restaurant, one account per person.** Everyone signs in with their own account, so the app records who uploaded, reviewed or paid what. Each account has a role from the start, but everyone has full access for now. Accounts are created by a script, with no sign-up page. Multi-tenancy is postponed on purpose: until there's a concrete second restaurant, another restaurant means another deployment.
 - **Spanish UI.** The project's UI and everything the user sees must be in Spanish: screens, labels, buttons, validation and error messages, and notifications. Internal identifiers like `paid` or `delivery_note` are never shown as-is; they're displayed in Spanish (e.g. *Pagado*, *Remito*).
 - **Web app first.** The original idea was a WhatsApp bot as the input channel. A web app covers the same workflow with less setup (no Meta Business account, no dedicated phone number) and gives the restaurant a proper dashboard from day one.
 
@@ -140,6 +140,17 @@ npm run start:worker
 cd frontend
 npm install
 npm run dev
+```
+
+### 4. Create an account
+
+There's no sign-up page and no email. Accounts are created, reset and disabled with a script in `backend/`:
+
+```bash
+cd backend
+npm run user:create -- --email ana@example.com --name Ana --role admin
+npm run user:reset-password -- --email ana@example.com
+npm run user:disable -- --email ana@example.com
 ```
 
 ## Deployment

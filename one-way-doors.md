@@ -13,3 +13,7 @@ Changes whose effects can't be undone with a revert. They always get a thorough 
 - Sending data out of the system: messages to people, or documents to a new LLM provider (what's sent can't be unsent)
 
 Everything else is a two-way door by default. When in doubt, treat it as one-way.
+
+## Postponed on purpose
+
+- **Multi-tenancy.** The app serves a single restaurant, so there's no `restaurant_id`, and another restaurant means another deployment (decision 5 in `system-design.md`). Only a concrete second restaurant unblocks it, not a hypothetical one. When that happens, it's a one-way door: a query that misses the restaurant filter exposes one restaurant's finances to another, and it touches the data model, authentication, the image endpoint and deduplication by `sha256`.

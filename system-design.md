@@ -1,6 +1,6 @@
 # System design
 
-> **Status:** agreed for the MVP, 2026-11-06. This is the working document for the design: iterate here, and let `plans/` turn it into work. If it disagrees with the README, this file wins.
+> **Status:** agreed for the MVP, 2026-11-06. Decision 5 revised to individual accounts, 2026-11-07. This is the working document for the design: iterate here, and let `plans/` turn it into work. If it disagrees with the README, this file wins.
 >
 > **This repo is public.** Never write real supplier names, CUITs or amounts here or in any other committed file.
 
@@ -38,7 +38,7 @@ Two sources shaped this design:
 2. **Payments are independent from documents.** A payment belongs to a supplier. `applications` says which documents it settles, so unapplied money is simply credit on the account. A deferred eCheq counts as paid when it's handed over.
 3. **Upload first, extract later.** The image is stored before anything else happens, and a worker processes a job table in Postgres.
 4. **Validation decides, review is optional.** Documents that pass every check are usable right away as *Sin revisar*. Documents that fail go to the *Error* tray. This replaces "nothing is saved until someone confirms": a misread that passes every check reaches the balance unseen, which is why the checks are explicit and *Sin revisar* stays visible.
-5. **Single tenant, single account.** No `restaurant_id`, no roles. Being logged in means full access. Another restaurant, whether sold to someone else or run by the same owner, means another deployment with its own database, not another row in `users`.
+5. **Single tenant, one account per person.** No `restaurant_id`. Each person signs in with their own account, so documents, payments and `audit_log` record who did what. `users.role` exists from day one, but every role has full access in the MVP. A script on the server creates accounts and resets passwords: no sign-up and no email. Another restaurant, whether sold to someone else or run by the same owner, means another deployment with its own database, not another row in `users`. Multi-tenancy is postponed on purpose, see [`one-way-doors.md`](one-way-doors.md#postponed-on-purpose).
 6. **Manual entry instead of importing the spreadsheet.** The spreadsheet's dates and numbers aren't reliable enough to import: dates mix formats and many have day and month swapped, and document numbers are truncated. Opening debt is typed in as up to two `opening_balance` documents per supplier, one for what's overdue and one for what isn't, so the dashboard keeps that split from day one.
 7. **Store tax and line detail now.** It costs little at extraction time and enables filters and reports after the MVP.
 8. **Claude Haiku 5.5 for extraction**, through the Claude API with the official TypeScript SDK.
@@ -67,8 +67,9 @@ flowchart LR
 | `unreviewed` | Sin revisar | Passed every check, nobody looked at it | Yes |
 | `reviewed` | Revisado | A person confirmed it, or typed it in | Yes |
 
-- Manual documents start as `reviewed`.
-- Saving an edit runs the checks again. If they pass, or the remaining issues are accepted, the document becomes `reviewed`.
+- Manual documents start as `reviewed`, by the person who typed them in.
+- Saving an edit runs the checks again. If they pass, or the remaining issues are accepted, the document becomes `reviewed`, by the person who saved it.
+- `reviewed_by` and `reviewed_at` always hold the last person who confirmed the data, and when.
 - `reviewed` never goes back to `error`.
 - The UI marks *Sin revisar* quietly. It blocks nothing: these documents can take payments as usual.
 - `error` documents can't take payments, because their supplier or total may still change.
@@ -116,7 +117,9 @@ documents
   total              numeric(14,2)         always positive, type gives the sign
   cae                text
   notes              text
+  created_by         fk users, not null    who uploaded it or typed it in
   reviewed_at        timestamptz
+  reviewed_by        fk users
   deleted_at         timestamptz           soft delete
 
 document_images
@@ -157,6 +160,7 @@ payments
   method             enum, not null        transfer | echeq | cash | mercado_pago | other
   reference          text                  eCheq number, transfer id
   notes              text
+  created_by         fk users, not null    who recorded it
   deleted_at         timestamptz
 
 applications
@@ -176,15 +180,20 @@ extraction_jobs                               re-extracting adds a row, so histo
   raw_output         jsonb                 exactly what the LLM returned, never edited
   last_error         text
 
-audit_log                                     who is unknown: the account is shared
+audit_log
+  user_id            fk users              null when the worker made the change
   entity             text, not null
   entity_id          uuid, not null
   action             text, not null
   before, after      jsonb
 
-users                                         one seeded row, no sign-up
+users                                         created by a script, no sign-up
   email              text, unique, not null
+  name               text, not null        shown as who uploaded, reviewed or paid
   password_hash      text, not null
+  password_set_at    timestamptz, not null sessions issued before it are rejected
+  role               enum, not null        admin | staff, not enforced in the MVP
+  disabled_at        timestamptz           can't sign in; users are never deleted
 ```
 
 ### Invariants
@@ -198,6 +207,7 @@ Checked in the database where possible. Some `CHECK` constraints and partial uni
 5. Only `invoice`, `delivery_note` and `opening_balance` receive applications. Only payments and `credit_note` documents provide them.
 6. While a document has applications, it can't be deleted, can't change supplier or type, and its `total` can't drop below what was applied.
 7. A non-deleted document in `unreviewed` or `reviewed` is unique by supplier, type, letter and `number_normalized`, when it has a number.
+8. `reviewed_at` and `reviewed_by` are set if and only if the document is `reviewed`.
 
 An opening balance in the restaurant's favor is a manual `credit_note`, because that's how it behaves: credit that can be applied later.
 
@@ -320,7 +330,7 @@ UI text is in Spanish.
 - **Resumen:** one row per supplier with *Sin vencer*, *Vencido* and *Total*, like the spreadsheet's summary, plus the warning about *Error* documents.
 - **Proveedor:** the supplier's account: documents, payments, credit and term.
 - **A resolver:** the *Error* tray, showing what's wrong with each document in plain Spanish.
-- **Documento:** the image next to the data, to fix or confirm it.
+- **Documento:** the image next to the data, to fix or confirm it, with who uploaded it and who reviewed it.
 - **Pagos:** record a payment and distribute it. The UI suggests oldest-due first, as the restaurant does today, and every row can be edited. What's left stays as credit. *Marcar como pagado* is a shortcut that creates the payment and its application together.
 
 ## Operations
@@ -328,11 +338,12 @@ UI text is in Spanish.
 - **Containers:** nginx, backend, worker and Postgres on one VPS, with Docker Compose.
 - **Storage:** about 1,400 images a year at around 1 MB each, so disk isn't a concern.
 - **Backups:** nightly `pg_dump` and a copy of `UPLOAD_DIR` to storage outside the VPS, with a tested restore. Today both would live on the same machine.
-- **Sessions:** the account is shared across devices, so sessions are long-lived, in an `httpOnly` cookie, and login is rate limited.
+- **Accounts:** a script on the server creates users, resets passwords and disables users. Users are disabled, never deleted, because documents, payments and `audit_log` point to them.
+- **Sessions:** long-lived, in an `httpOnly` cookie, and login is rate limited. Every request checks that the user isn't disabled and that the session was issued after `password_set_at`, so disabling someone or resetting their password signs them out everywhere.
 
 ## Out of scope
 
-Multi-tenancy, other restaurants, roles, spreadsheet import, WhatsApp, linking delivery notes to invoices, due-date reminders, QR cross-checks and currencies other than ARS.
+Multi-tenancy (postponed on purpose, see [`one-way-doors.md`](one-way-doors.md#postponed-on-purpose)), other restaurants, permissions by role, sign-up, password reset by email, spreadsheet import, WhatsApp, linking delivery notes to invoices, due-date reminders, QR cross-checks and currencies other than ARS.
 
 ## Open questions
 
