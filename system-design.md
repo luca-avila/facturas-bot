@@ -339,7 +339,7 @@ UI text is in Spanish.
 - **Storage:** about 1,400 images a year at around 1 MB each, so disk isn't a concern.
 - **Backups:** nightly `pg_dump` and a copy of `UPLOAD_DIR` to storage outside the VPS, with a tested restore. Today both would live on the same machine.
 - **Accounts:** a script on the server creates users, resets passwords and disables users. Users are disabled, never deleted, because documents, payments and `audit_log` point to them.
-- **Sessions:** long-lived, in an `httpOnly` cookie, and login is rate limited. Every request checks that the user isn't disabled and that the session was issued after `password_set_at`, so disabling someone or resetting their password signs them out everywhere.
+- **Sessions:** long-lived, in an `httpOnly` cookie, and login is rate limited. A session expires after 30 days without use, and each request renews it. Every request checks that the user isn't disabled and that the session was issued after `password_set_at`, so disabling someone or resetting their password signs them out everywhere.
 
 ## Out of scope
 

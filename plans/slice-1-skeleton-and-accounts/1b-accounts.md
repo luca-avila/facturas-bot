@@ -2,8 +2,6 @@
 
 > Second half of slice 1 in [`mvp-slices.md`](../mvp-slices.md#1-skeleton-and-accounts). It needs [1a](1a-scaffold.md) merged. Run it with `/feature` and this file's path.
 
-**Before running.** Answer [question 15](../mvp-slices.md#open-questions), session length, and write it in Rules. Otherwise the planner returns it as a question.
-
 **Goal.** A person created by the script signs in from their phone and sees an empty Spanish shell. Nothing else answers without a session.
 
 **Design.** [Decision 5](../../system-design.md#decisions), accounts and sessions in [Operations](../../system-design.md#operations), and `users` in [Data model](../../system-design.md#data-model).
@@ -17,7 +15,7 @@
   - Every API endpoint requires a session unless it's explicitly public, and sign-in is the only public one.
   - Every request rejects disabled users and sessions issued before `password_set_at`.
   - Login is rate limited, and the session lives in an `httpOnly` cookie.
-  - Session length: **pending, question 15**.
+  - A session expires after 30 days without use. Each request renews it.
   - `role` is stored but not enforced.
   - Sign-in, the rate-limit message and the shell are in Spanish. The shell shows the user's name.
 - Later:
@@ -36,6 +34,7 @@
 - A session older than `password_set_at` is rejected.
 - Login is rate limited.
 - The cookie is `httpOnly`.
+- A session unused for 30 days is rejected, and one used within that time is renewed.
 - Every route except sign-in returns 401 without a session.
 
 **Out.** Financial data, HTTPS and deployment (slice 8), role enforcement, sign-up and email.

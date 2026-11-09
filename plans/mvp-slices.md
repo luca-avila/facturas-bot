@@ -369,5 +369,5 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 12. **Filters and search** (slices 2 and 3). The README promises them, but the design doesn't name any. Which ones are in the MVP?
 13. **Opening balances** (slices 2 and 3). Is "up to two per supplier" enforced, or is it just how they're meant to be used? Where do documents with no due date go in the oldest-due-first suggestion?
 14. **Suppliers created from a misread CUIT** (slice 5). A CUIT that's valid but wrong creates a supplier that can't be deleted or merged, and it stays in *Resumen*. Is that acceptable for the MVP?
-15. **Session length** (slice 1b). The design says sessions are long-lived but gives no duration.
+15. **Session length** (slice 1b). Answered: a session expires after 30 days without use, and each request renews it.
 16. **Where backups go** (slice 8). The storage outside the VPS isn't chosen yet, and sending backups there is data leaving the system. Where should they go?
