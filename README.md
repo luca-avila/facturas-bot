@@ -91,7 +91,7 @@ A few choices worth explaining:
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 24
 - Docker and Docker Compose
 - A Claude API key
 

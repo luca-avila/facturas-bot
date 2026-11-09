@@ -66,9 +66,6 @@ These risks should be caught by tooling, not review. Until a check exists, the r
 
 | Risk | Check |
 | --- | --- |
-| Money handled as a float | `Money` type based on a decimal, and ESLint against `parseFloat` and `toFixed` on amounts |
-| "Today" in the wrong time zone | ESLint bans `new Date()` outside a single `clock.ts` |
 | Internal identifiers shown in the UI | Exhaustive `Record<DocumentType, string>` labels, so a missing Spanish label doesn't compile |
 | Writing `applications` outside its service | `no-restricted-imports` in ESLint |
-| Real data in the public repo | CI check for valid CUITs, with an allowlist of test CUITs |
 | Broken money invariants | Tests against a real Postgres, since locks and `CHECK` constraints can't be tested with mocks |
