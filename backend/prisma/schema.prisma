@@ -1,0 +1,12 @@
+// Models arrive with the slices that use them. See system-design.md for the data model.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}

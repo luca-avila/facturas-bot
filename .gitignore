@@ -1,8 +1,13 @@
-# Nestjs specific
-/dist
-/node_modules
-/build
+# Dependencies and build output (unanchored so they match inside backend/ and frontend/)
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
 /tmp
+
+# Generated Prisma client
+backend/src/generated/
 
 # Logs
 logs
