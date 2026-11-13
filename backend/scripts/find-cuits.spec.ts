@@ -1,4 +1,4 @@
-import { findCuits } from './find-cuits.js';
+import { checkFile, findCuits } from './find-cuits.js';
 
 // Test sources only ever hold allowlisted literals. To see a flag, the
 // injected allowlist leaves them out.
@@ -43,5 +43,40 @@ describe('findCuits', () => {
 
   it('reports every finding in the text', () => {
     expect(findCuits('30000000015 30000000023\n30000000031', NONE)).toHaveLength(3);
+  });
+});
+
+describe('checkFile', () => {
+  const allowlists = { cuits: NONE, unscannedFiles: ['frontend/public/icon.png'] };
+  const BINARY = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x1a]);
+
+  it('scans UTF-8 text for CUITs', () => {
+    const result = checkFile('notes.md', Buffer.from('cuit 30-00000001-5\n'), allowlists);
+    expect(result.unreadable).toBe(false);
+    expect(result.findings).toHaveLength(1);
+  });
+
+  it('reads an empty file as text', () => {
+    expect(checkFile('empty.txt', Buffer.alloc(0), allowlists)).toEqual({ unreadable: false, findings: [] });
+  });
+
+  it.each([
+    ['a binary', BINARY],
+    ['UTF-16 text', Buffer.from('cuit 30000000015', 'utf16le')],
+    ['Latin-1 text', Buffer.from('raz\xf3n social 30000000015', 'latin1')],
+  ])('marks %s as unreadable', (_, content) => {
+    expect(checkFile('data.bin', content, allowlists)).toEqual({ unreadable: true, findings: [] });
+  });
+
+  it('lets through an unreadable file listed in unscannedFiles', () => {
+    expect(checkFile('frontend/public/icon.png', BINARY, allowlists)).toEqual({
+      unreadable: false,
+      findings: [],
+    });
+  });
+
+  it('still scans a listed file that is text', () => {
+    const result = checkFile('frontend/public/icon.png', Buffer.from('30000000015'), allowlists);
+    expect(result.findings).toHaveLength(1);
   });
 });

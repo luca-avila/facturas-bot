@@ -13,7 +13,7 @@ Orientation for coding agents working in this repo.
 - `samples/`: real supplier documents for testing extraction. Gitignored, so it may not exist in your checkout.
 - `backend/` (NestJS) and `frontend/` (React + Vite). Each has `npm run lint`, `npm run typecheck` and `npm test`.
 - `backend/src/common/`: `money.ts` (`Money`, the only place for amounts), `clock.ts` (`today()` in Buenos Aires, the only place that reads the clock) and `cuit.ts` (`isValidCuit`).
-- `backend/test/test-cuits.ts`: `TEST_CUITS`, invented CUITs. Every CUIT in a test or fixture must come from there: the CUIT check (part of backend `npm run lint`, and in CI) fails on any other valid one.
+- `backend/test/test-cuits.ts`: `TEST_CUITS`, invented CUITs. Every CUIT in a test or fixture must come from there: the CUIT check (part of backend `npm run lint`, and in CI) fails on any other valid one. It also fails on any file that isn't UTF-8 text, such as an image, a PDF, a spreadsheet or UTF-16, unless `UNSCANNED_FILES` in `backend/scripts/check-cuits.ts` lists it.
 - Backend tests run against a real Postgres. Start it first with `docker compose up -d db`.
 
 ## Rules that are easy to miss
