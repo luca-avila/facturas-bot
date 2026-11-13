@@ -13,6 +13,12 @@ const cli = path.join(backendDir, 'scripts', 'check-cuits.ts');
 // Built at runtime so this file never holds an off-allowlist literal.
 const OFF_ALLOWLIST = ['30', '00000005', '8'].join('');
 
+// Inside a git hook, GIT_DIR and GIT_INDEX_FILE point at the real repo, and
+// the commands below would follow them there.
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+);
+
 describe('check-cuits CLI', () => {
   let repo: string;
 
@@ -26,7 +32,7 @@ describe('check-cuits CLI', () => {
   });
 
   function git(...args: string[]) {
-    return promisify(execFile)('git', args, { cwd: repo });
+    return promisify(execFile)('git', args, { cwd: repo, env });
   }
 
   function write(file: string, content: string | Buffer) {
@@ -35,7 +41,7 @@ describe('check-cuits CLI', () => {
 
   async function check(): Promise<{ code: number; output: string }> {
     try {
-      const { stdout, stderr } = await promisify(execFile)(tsx, [cli], { cwd: repo });
+      const { stdout, stderr } = await promisify(execFile)(tsx, [cli], { cwd: repo, env });
       return { code: 0, output: stdout + stderr };
     } catch (error) {
       const { code, stdout, stderr } = error as { code: number; stdout: string; stderr: string };
