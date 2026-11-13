@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import { isValidCuit } from '../src/common/cuit.js';
 
 export interface CuitFinding {
@@ -35,4 +36,30 @@ export function findCuits(text: string, allowlist: Iterable<string>): CuitFindin
 
 function mask(digits: string): string {
   return `${digits.slice(0, 2)}-********-*`;
+}
+
+export interface FileCheck {
+  /**
+   * The file isn't UTF-8 text, so the check can't see inside it, and it isn't
+   * on `unscannedFiles`.
+   */
+  unreadable: boolean;
+  findings: CuitFinding[];
+}
+
+/**
+ * Checks one file. Binaries, compressed formats such as xlsx or pdf, and
+ * UTF-16 can hide a CUIT from the scan, so they fail unless `unscannedFiles`
+ * lists their path.
+ */
+export function checkFile(
+  file: string,
+  content: Buffer,
+  allowlists: { cuits: Iterable<string>; unscannedFiles: Iterable<string> },
+): FileCheck {
+  // ASCII in UTF-16 is valid UTF-8, but with a NUL after every character.
+  if (content.includes(0) || !isUtf8(content)) {
+    return { unreadable: !new Set(allowlists.unscannedFiles).has(file), findings: [] };
+  }
+  return { unreadable: false, findings: findCuits(content.toString('utf8'), allowlists.cuits) };
 }

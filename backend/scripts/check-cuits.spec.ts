@@ -13,6 +13,12 @@ const cli = path.join(backendDir, 'scripts', 'check-cuits.ts');
 // Built at runtime so this file never holds an off-allowlist literal.
 const OFF_ALLOWLIST = ['30', '00000005', '8'].join('');
 
+// Inside a git hook, GIT_DIR and GIT_INDEX_FILE point at the real repo, and
+// the commands below would follow them there.
+const env = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')),
+);
+
 describe('check-cuits CLI', () => {
   let repo: string;
 
@@ -26,7 +32,7 @@ describe('check-cuits CLI', () => {
   });
 
   function git(...args: string[]) {
-    return promisify(execFile)('git', args, { cwd: repo });
+    return promisify(execFile)('git', args, { cwd: repo, env });
   }
 
   function write(file: string, content: string | Buffer) {
@@ -35,7 +41,7 @@ describe('check-cuits CLI', () => {
 
   async function check(): Promise<{ code: number; output: string }> {
     try {
-      const { stdout, stderr } = await promisify(execFile)(tsx, [cli], { cwd: repo });
+      const { stdout, stderr } = await promisify(execFile)(tsx, [cli], { cwd: repo, env });
       return { code: 0, output: stdout + stderr };
     } catch (error) {
       const { code, stdout, stderr } = error as { code: number; stdout: string; stderr: string };
@@ -79,10 +85,9 @@ describe('check-cuits CLI', () => {
     expect(output).toContain('CUIT check passed');
   });
 
-  it('does not crash on a non-UTF-8 file or a tracked file deleted from disk', async () => {
-    write('image.bin', Buffer.from([0xff, 0xfe, 0x00, 0xc3, 0x28, 0x80, 0x31]));
+  it('skips a tracked file deleted from disk', async () => {
     write('gone.txt', 'soon deleted');
-    await git('add', 'image.bin', 'gone.txt');
+    await git('add', 'gone.txt');
     unlinkSync(path.join(repo, 'gone.txt'));
 
     const { code, output } = await check();
@@ -90,13 +95,23 @@ describe('check-cuits CLI', () => {
     expect(output).toContain('CUIT check passed');
   });
 
-  it('still finds a CUIT in a non-UTF-8 file', async () => {
-    write('legacy.txt', Buffer.concat([Buffer.from([0xff, 0xfe, 0x20]), Buffer.from(OFF_ALLOWLIST)]));
-    await git('add', 'legacy.txt');
+  it('fails on a binary file, naming it', async () => {
+    write('ledger.xlsx', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]));
+    await git('add', 'ledger.xlsx');
 
     const { code, output } = await check();
     expect(code).toBe(1);
-    expect(output).toContain('legacy.txt:1:');
+    expect(output).toContain('ledger.xlsx');
+    expect(output).toContain('UNSCANNED_FILES');
+  });
+
+  it('fails on UTF-16 text, whose digits the scan would miss', async () => {
+    write('export.csv', Buffer.from(`proveedor,${OFF_ALLOWLIST}\n`, 'utf16le'));
+    await git('add', 'export.csv');
+
+    const { code, output } = await check();
+    expect(code).toBe(1);
+    expect(output).toContain('export.csv');
     expect(output).not.toContain(OFF_ALLOWLIST);
   });
 });
