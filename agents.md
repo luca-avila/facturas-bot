@@ -20,4 +20,5 @@ Orientation for coding agents working in this repo.
 
 - **The repo is public.** Never copy real supplier names, CUITs, amounts or anything else from `samples/` into a committed file, including tests and fixtures. Use invented data.
 - **Spanish UI, English code.** Everything the user sees is in Spanish. Code, identifiers and docs are in English.
+- **Tests compute hashes, never write them out.** The CUIT check reads about 1 in 250 sha256 hex digests as a valid CUIT, and stays strict on purpose. Compute each hash at run time from the bytes the test uses.
 - **Money is never a float.** Use `numeric` in the database and a decimal type in code.

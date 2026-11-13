@@ -47,6 +47,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - There is one balance query (D1). It only counts `unreviewed` and `reviewed` documents that aren't deleted (D3), and `applied` is 0 until slice 3.
   - Changes to documents and terms write `audit_log` in the same transaction (D2).
   - Every enum has an exhaustive set of Spanish labels.
+  - `Money.fromString` rejects more than 12 integer digits, the most `numeric(14,2)` holds. Past that, `decimal.js` rounds to its default 20 significant digits, so `add` would round.
   - Manual entry refuses to save when invariant 1 or 7 would fail, for example an invoice from a supplier with no term and no typed due date. Whether more checks run is [question 1](#open-questions).
 - Later: invariant 6 in slice 3, and the validation codes in slices 5 and 7.
 
@@ -65,6 +66,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - The balance query leaves out deleted, `processing` and `error` rows (inserted directly), and subtracts credit notes.
 - The database rejects rows that break invariant 1, 7 (including the null-letter case) or 8.
 - The CUIT check digit.
+- `Money.fromString` rejects 13 integer digits, and adding a cent to a 12-digit amount stays exact.
 - When the audit write fails, the change is rolled back too.
 
 **Out.** Payments, *Pagado*, uploads, *Error* and *Sin revisar*, lines and taxes, and filters ([question 12](#open-questions)).
