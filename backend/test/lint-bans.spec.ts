@@ -38,6 +38,12 @@ const clockCode = {
 };
 
 describe('backend lint bans', () => {
+  // The first typed lint builds the whole TypeScript program. Under the load of
+  // the other spec files (argon2 hashing) that alone can pass the 5 s test timeout.
+  beforeAll(async () => {
+    await banErrors(MAIN, 'export {};\n');
+  }, 60_000);
+
   describe('money', () => {
     it.each(Object.entries(floatCode))('%s is an error outside money.ts', async (_, code) => {
       expect(await banErrors(MAIN, code)).not.toEqual([]);
