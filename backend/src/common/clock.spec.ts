@@ -1,4 +1,4 @@
-import { today } from './clock.js';
+import { now, today } from './clock.js';
 
 describe('today', () => {
   afterEach(() => {
@@ -22,5 +22,17 @@ describe('today', () => {
 
   it('zero-pads month and day', () => {
     expect(at('2026-01-05T12:00:00Z')).toBe('2026-01-05');
+  });
+});
+
+describe('now', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns the instant set with vi.setSystemTime', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime('2026-11-10T12:34:56.789Z');
+    expect(now().toISOString()).toBe('2026-11-10T12:34:56.789Z');
   });
 });
