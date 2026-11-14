@@ -4,6 +4,7 @@ import { UsersModule } from '../users/users.module.js';
 import { AuthConfig } from './auth.config.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { LoginAttempts } from './login-attempts.js';
 import { SessionGuard } from './session.guard.js';
 import { SessionTokens } from './session-tokens.js';
 
@@ -14,6 +15,7 @@ import { SessionTokens } from './session-tokens.js';
     AuthConfig,
     SessionTokens,
     AuthService,
+    LoginAttempts,
     // Every route of every module, now and in later slices.
     { provide: APP_GUARD, useClass: SessionGuard },
   ],

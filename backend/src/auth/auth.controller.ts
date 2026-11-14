@@ -4,6 +4,8 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
+  HttpStatus,
   Post,
   Res,
   UnauthorizedException,
@@ -50,8 +52,16 @@ export class AuthController {
   ): Promise<ProfileResponse> {
     const { email, password } = parseCredentials(body);
     const result = await this.auth.signIn(email, password);
-    if (result.kind === 'invalid_credentials')
+    if (result.kind === 'rate_limited') {
+      res.setHeader('Retry-After', String(result.retryAfterSeconds));
+      throw new HttpException(
+        'Too Many Requests',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (result.kind === 'invalid_credentials') {
       throw new UnauthorizedException();
+    }
     setSessionCookie(res, result.token, this.config.secureCookie);
     return { name: result.user.name, email: result.user.email };
   }
