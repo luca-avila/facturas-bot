@@ -246,7 +246,11 @@ describe('auth', () => {
         JSON.stringify({ ...claims, sub: randomUUID() }),
       ).toString('base64url');
       await me(`${header}.${forged}.${signature}`).expect(401);
-      await me(`${session.slice(0, -2)}xx`).expect(401);
+      // A middle character: the last one carries padding bits that decoding
+      // ignores, so changing it can leave the signature as it was.
+      const changed = signature[10] === 'A' ? 'B' : 'A';
+      const badSignature = `${signature.slice(0, 10)}${changed}${signature.slice(11)}`;
+      await me(`${header}.${payload}.${badSignature}`).expect(401);
     });
 
     it('rejects a token signed with another secret', async () => {
