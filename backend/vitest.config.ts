@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { defineConfig } from 'vitest/config';
 import { loadRootEnv } from './src/env.js';
 import { testDatabaseUrl } from './test/test-database.js';
@@ -19,6 +20,8 @@ export default defineConfig({
       DATABASE_URL: testDatabaseUrl(process.env.DATABASE_URL),
       // A time-zone bug can't hide behind a machine already in Buenos Aires.
       TZ: 'UTC',
+      // A fresh secret per run, so no secret is ever written down.
+      JWT_SECRET: randomBytes(32).toString('base64url'),
     },
   },
 });

@@ -2,8 +2,11 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import request from 'supertest';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 import { verifyPassword } from '../src/users/password.js';
+import { createTestApp } from '../test/app.js';
 
 const backendDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -36,14 +39,20 @@ function users(args: string[], stdin: string): Promise<Result> {
 describe('users script', () => {
   const prisma = new PrismaService();
   const password = `pw-${randomUUID()}`;
+  let app: NestExpressApplication;
+
+  beforeAll(async () => {
+    app = await createTestApp();
+  });
 
   afterAll(async () => {
     await prisma.$disconnect();
+    await app.close();
   });
 
   const uniqueEmail = () => `ana-${randomUUID()}@example.com`;
 
-  it('creates a user from the password on stdin, and never prints it', async () => {
+  it('creates a user from the password on stdin, who can then sign in', async () => {
     const email = uniqueEmail();
     const result = await users(
       ['create', '--email', email, '--name', 'Ana', '--role', 'admin'],
@@ -52,8 +61,11 @@ describe('users script', () => {
 
     expect(result).toEqual({ code: 0, output: `Created ${email} (admin).\n` });
     expect(result.output).not.toContain(password);
-    const row = await prisma.user.findUniqueOrThrow({ where: { email } });
-    expect(await verifyPassword(row.passwordHash, password)).toBe(true);
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email, password })
+      .expect(200);
+    expect(res.body).toEqual({ name: 'Ana', email });
   });
 
   it('takes only the first line of stdin, without its line ending', async () => {
