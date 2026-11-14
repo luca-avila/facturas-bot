@@ -15,7 +15,9 @@ describe('users table', () => {
   }
 
   it('accepts a normalized email', async () => {
-    await expect(insertRaw(`ana-${randomUUID()}@example.com`)).resolves.toBeUndefined();
+    await expect(
+      insertRaw(`ana-${randomUUID()}@example.com`),
+    ).resolves.toBeUndefined();
   });
 
   it.each([

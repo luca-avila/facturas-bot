@@ -21,7 +21,12 @@ describe('UsersService', () => {
   describe('create', () => {
     it('stores the normalized email, the trimmed name, the role and an argon2id hash', async () => {
       const email = uniqueEmail();
-      await users.create({ email: `  ${email.toUpperCase()} `, name: '  Ana  ', role: 'admin', password });
+      await users.create({
+        email: `  ${email.toUpperCase()} `,
+        name: '  Ana  ',
+        role: 'admin',
+        password,
+      });
 
       const row = await prisma.user.findUniqueOrThrow({ where: { email } });
       expect(row.name).toBe('Ana');
@@ -34,7 +39,12 @@ describe('UsersService', () => {
     it('sets password_set_at from the app clock', async () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime('2026-11-10T12:00:00.123Z');
-      const user = await users.create({ email: uniqueEmail(), name: 'Ana', role: 'staff', password });
+      const user = await users.create({
+        email: uniqueEmail(),
+        name: 'Ana',
+        role: 'staff',
+        password,
+      });
       expect(user.passwordSetAt.toISOString()).toBe('2026-11-10T12:00:00.123Z');
     });
 
@@ -43,7 +53,12 @@ describe('UsersService', () => {
       await users.create({ email, name: 'Ana', role: 'staff', password });
 
       await expect(
-        users.create({ email: email.toUpperCase(), name: 'Otra Ana', role: 'staff', password }),
+        users.create({
+          email: email.toUpperCase(),
+          name: 'Otra Ana',
+          role: 'staff',
+          password,
+        }),
       ).rejects.toThrow(/already exists/);
       expect(await prisma.user.count({ where: { email } })).toBe(1);
     });
@@ -53,29 +68,44 @@ describe('UsersService', () => {
       await users.create({ email, name: 'Ana', role: 'staff', password });
       await users.disable(email);
 
-      await expect(users.create({ email, name: 'Ana', role: 'staff', password })).rejects.toThrow(
-        UserInputError,
-      );
+      await expect(
+        users.create({ email, name: 'Ana', role: 'staff', password }),
+      ).rejects.toThrow(UserInputError);
     });
 
     it('refuses an 11-character password and writes nothing', async () => {
       const email = uniqueEmail();
       await expect(
-        users.create({ email, name: 'Ana', role: 'staff', password: 'a'.repeat(11) }),
+        users.create({
+          email,
+          name: 'Ana',
+          role: 'staff',
+          password: 'a'.repeat(11),
+        }),
       ).rejects.toThrow(/at least 12/);
       expect(await prisma.user.count({ where: { email } })).toBe(0);
     });
 
     it('accepts a 12-character password', async () => {
       const email = uniqueEmail();
-      await users.create({ email, name: 'Ana', role: 'staff', password: 'a'.repeat(12) });
+      await users.create({
+        email,
+        name: 'Ana',
+        role: 'staff',
+        password: 'a'.repeat(12),
+      });
       expect(await prisma.user.count({ where: { email } })).toBe(1);
     });
 
     it('counts the password length in code points', async () => {
       // 11 emoji are 22 UTF-16 units, but only 11 characters.
       await expect(
-        users.create({ email: uniqueEmail(), name: 'Ana', role: 'staff', password: '😀'.repeat(11) }),
+        users.create({
+          email: uniqueEmail(),
+          name: 'Ana',
+          role: 'staff',
+          password: '😀'.repeat(11),
+        }),
       ).rejects.toThrow(/at least 12/);
     });
 
@@ -89,7 +119,13 @@ describe('UsersService', () => {
     ])('refuses %s', async (_, override) => {
       const email = uniqueEmail();
       await expect(
-        users.create({ email, name: 'Ana', role: 'staff', password, ...override }),
+        users.create({
+          email,
+          name: 'Ana',
+          role: 'staff',
+          password,
+          ...override,
+        }),
       ).rejects.toThrow(UserInputError);
       expect(await prisma.user.count({ where: { email } })).toBe(0);
     });
@@ -100,28 +136,42 @@ describe('UsersService', () => {
       const email = uniqueEmail();
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime('2026-11-10T12:00:00Z');
-      const before = await users.create({ email, name: 'Ana', role: 'staff', password });
+      const before = await users.create({
+        email,
+        name: 'Ana',
+        role: 'staff',
+        password,
+      });
       vi.setSystemTime('2026-11-11T12:00:00Z');
 
       await users.resetPassword(email, 'another long password');
 
       const after = await prisma.user.findUniqueOrThrow({ where: { email } });
       expect(after.passwordHash).not.toBe(before.passwordHash);
-      expect(after.passwordSetAt.toISOString()).toBe('2026-11-11T12:00:00.000Z');
+      expect(after.passwordSetAt.toISOString()).toBe(
+        '2026-11-11T12:00:00.000Z',
+      );
     });
 
     it('refuses an unknown email', async () => {
-      await expect(users.resetPassword(uniqueEmail(), 'another long password')).rejects.toThrow(
-        /no user/,
-      );
+      await expect(
+        users.resetPassword(uniqueEmail(), 'another long password'),
+      ).rejects.toThrow(/no user/);
     });
 
     it('refuses a disabled user and leaves the hash alone', async () => {
       const email = uniqueEmail();
-      const created = await users.create({ email, name: 'Ana', role: 'staff', password });
+      const created = await users.create({
+        email,
+        name: 'Ana',
+        role: 'staff',
+        password,
+      });
       await users.disable(email);
 
-      await expect(users.resetPassword(email, 'another long password')).rejects.toThrow(/disabled/);
+      await expect(
+        users.resetPassword(email, 'another long password'),
+      ).rejects.toThrow(/disabled/);
       const row = await prisma.user.findUniqueOrThrow({ where: { email } });
       expect(row.passwordHash).toBe(created.passwordHash);
     });
@@ -129,7 +179,9 @@ describe('UsersService', () => {
     it('refuses a short password', async () => {
       const email = uniqueEmail();
       await users.create({ email, name: 'Ana', role: 'staff', password });
-      await expect(users.resetPassword(email, 'short')).rejects.toThrow(/at least 12/);
+      await expect(users.resetPassword(email, 'short')).rejects.toThrow(
+        /at least 12/,
+      );
     });
   });
 

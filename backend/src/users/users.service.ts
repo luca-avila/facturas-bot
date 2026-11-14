@@ -26,7 +26,9 @@ function isUserRole(role: string): role is UserRole {
 
 function assertPasswordLength(password: string): void {
   if (!isLongEnough(password)) {
-    throw new UserInputError(`The password must have at least ${MIN_PASSWORD_LENGTH} characters.`);
+    throw new UserInputError(
+      `The password must have at least ${MIN_PASSWORD_LENGTH} characters.`,
+    );
   }
 }
 
@@ -37,21 +39,35 @@ export class UsersService {
   async create(input: CreateUserInput): Promise<User> {
     const email = normalizeEmail(input.email);
     const name = input.name.trim();
-    if (!isValidEmail(email)) throw new UserInputError(`"${email}" isn't a valid email.`);
+    if (!isValidEmail(email))
+      throw new UserInputError(`"${email}" isn't a valid email.`);
     if (name === '') throw new UserInputError('The name is empty.');
     if (!isUserRole(input.role)) {
-      throw new UserInputError(`The role must be one of: ${Object.values(UserRole).join(', ')}.`);
+      throw new UserInputError(
+        `The role must be one of: ${Object.values(UserRole).join(', ')}.`,
+      );
     }
     assertPasswordLength(input.password);
 
     const passwordHash = await hashPassword(input.password);
     try {
       return await this.prisma.user.create({
-        data: { email, name, role: input.role, passwordHash, passwordSetAt: now() },
+        data: {
+          email,
+          name,
+          role: input.role,
+          passwordHash,
+          passwordSetAt: now(),
+        },
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new UserInputError(`A user with the email ${email} already exists.`);
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new UserInputError(
+          `A user with the email ${email} already exists.`,
+        );
       }
       throw error;
     }
@@ -82,7 +98,9 @@ export class UsersService {
   }
 
   findByEmail(email: string): Promise<User | null> {
-    return this.prisma.user.findUnique({ where: { email: normalizeEmail(email) } });
+    return this.prisma.user.findUnique({
+      where: { email: normalizeEmail(email) },
+    });
   }
 
   /** Null for an id that isn't a UUID, so a bad id is "no user" and never a database error. */
@@ -93,7 +111,8 @@ export class UsersService {
 
   private async throwMissingOrDisabled(email: string): Promise<never> {
     const user = await this.findByEmail(email);
-    if (user === null) throw new UserInputError(`There's no user with the email ${email}.`);
+    if (user === null)
+      throw new UserInputError(`There's no user with the email ${email}.`);
     throw new UserInputError(`${email} is disabled.`);
   }
 }

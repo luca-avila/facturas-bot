@@ -21,7 +21,10 @@ let dummyHash: Promise<string> | undefined;
  * doesn't reveal which emails exist. The dummy is computed once, at run time,
  * from a random value.
  */
-export async function verifyPassword(hash: string | null, password: string): Promise<boolean> {
+export async function verifyPassword(
+  hash: string | null,
+  password: string,
+): Promise<boolean> {
   if (hash === null) {
     dummyHash ??= hashPassword(randomBytes(32).toString('base64url'));
     await argon2.verify(await dummyHash, password);
