@@ -117,17 +117,18 @@ describe('UsersService', () => {
       ['an empty name', { name: '   ' }],
       ['an unknown role', { role: 'owner' }],
     ])('refuses %s', async (_, override) => {
-      const email = uniqueEmail();
-      await expect(
-        users.create({
-          email,
-          name: 'Ana',
-          role: 'staff',
-          password,
-          ...override,
-        }),
-      ).rejects.toThrow(UserInputError);
-      expect(await prisma.user.count({ where: { email } })).toBe(0);
+      const input = {
+        email: uniqueEmail(),
+        name: 'Ana',
+        role: 'staff',
+        password,
+        ...override,
+      };
+      await expect(users.create(input)).rejects.toThrow(UserInputError);
+      // The email actually sent, so the invalid-email cases check something too.
+      expect(await prisma.user.count({ where: { email: input.email } })).toBe(
+        0,
+      );
     });
   });
 
