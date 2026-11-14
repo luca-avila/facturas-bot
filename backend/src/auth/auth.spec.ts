@@ -224,9 +224,10 @@ describe('auth', () => {
       secret: Uint8Array,
       sub: string,
       passwordSetAt: number,
+      alg = 'HS256',
     ) {
       return new SignJWT({ passwordSetAt })
-        .setProtectedHeader({ alg: 'HS256' })
+        .setProtectedHeader({ alg })
         .setSubject(sub)
         .setIssuedAt()
         .setExpirationTime('1d')
@@ -279,6 +280,19 @@ describe('auth', () => {
       ['a sub that is not a UUID', 'not-a-uuid'],
     ])('rejects a valid token for %s with 401, not 500', async (_, sub) => {
       await me(await sign(testSecret(), sub, T.getTime())).expect(401);
+    });
+
+    it('rejects a token signed with the right secret but another algorithm', async () => {
+      const ana = await createUser(app);
+      const user = await users.findByEmail(ana.email);
+      if (!user) throw new Error('missing user');
+      const token = await sign(
+        testSecret(),
+        user.id,
+        user.passwordSetAt.getTime(),
+        'HS512',
+      );
+      await me(token).expect(401);
     });
 
     it('rejects a token signed with alg none', async () => {
