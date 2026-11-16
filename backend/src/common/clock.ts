@@ -12,9 +12,14 @@ const dateFormat = new Intl.DateTimeFormat('en-US', {
   day: '2-digit',
 });
 
+/** The current instant. Everything that stores or compares a timestamp reads it here. */
+export function now(): Date {
+  return new Date();
+}
+
 /** Today's date in Buenos Aires as `YYYY-MM-DD`, whatever the machine's time zone. */
 export function today(): string {
-  const parts = dateFormat.formatToParts(new Date());
+  const parts = dateFormat.formatToParts(now());
   const part = (type: Intl.DateTimeFormatPartTypes): string => {
     const value = parts.find((p) => p.type === type)?.value;
     if (!value) throw new Error(`Missing ${type} in formatted date`);

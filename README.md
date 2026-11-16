@@ -110,7 +110,7 @@ Fill in `.env`:
 | `DATABASE_URL`  | PostgreSQL connection string             |
 | `ANTHROPIC_API_KEY` | Claude API key used for extraction   |
 | `LLM_MODEL`     | Model used for extraction (`claude-haiku-5-5`) |
-| `JWT_SECRET`    | Secret used to sign auth tokens          |
+| `JWT_SECRET`    | Signs session cookies. At least 32 characters: generate one with `openssl rand -base64 48`. Changing it signs everyone out |
 | `UPLOAD_DIR`    | Where uploaded document images are stored |
 | `RESTAURANT_CUIT` | The restaurant's CUIT, used to detect documents addressed to someone else |
 
@@ -142,9 +142,11 @@ npm install
 npm run dev
 ```
 
+`npm run start:dev` sets `NODE_ENV=development`, the only setting that drops `Secure` from the session cookie. That's what lets a phone sign in over plain HTTP on the local network. To try it from a phone, run the frontend with `npm run dev -- --host` and open `http://<computer's LAN IP>:5173`. Vite sends `/api` to the backend, so the browser sees one origin.
+
 ### 4. Create an account
 
-There's no sign-up page and no email. Accounts are created, reset and disabled with a script in `backend/`:
+There's no sign-up page and no email. Accounts are created, reset and disabled with a script in `backend/`. `user:create` and `user:reset-password` prompt for the password twice, hidden (at least 12 characters), or read it from the first line of stdin when it isn't a terminal. Resetting a password or disabling a user signs out all their sessions.
 
 ```bash
 cd backend

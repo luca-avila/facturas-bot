@@ -7,7 +7,7 @@
 const MONEY_MESSAGE =
   'Floats lose cents. Use Money (backend/src/common/money.ts) for amounts.';
 const CLOCK_MESSAGE =
-  "Reading the clock here can give the wrong day. Use today() (backend/src/common/clock.ts), or vi.setSystemTime() in tests.";
+  "Reading the clock here can give the wrong day. Use today() or now() (backend/src/common/clock.ts), or vi.setSystemTime() in tests.";
 
 /** `parseFloat` and `toFixed`. Turned off only in the backend's `money.ts`. */
 export const moneyBans = {
