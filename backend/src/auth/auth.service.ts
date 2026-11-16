@@ -22,8 +22,8 @@ export class AuthService {
   async signIn(rawEmail: string, password: string): Promise<SignInResult> {
     const email = normalizeEmail(rawEmail);
 
-    // Before any lookup or password work.
-    const retryAfterSeconds = this.attempts.retryAfterSeconds(email);
+    // Before any await: this attempt counts as a failure until it succeeds.
+    const retryAfterSeconds = this.attempts.begin(email);
     if (retryAfterSeconds !== null)
       return { kind: 'rate_limited', retryAfterSeconds };
 
@@ -33,10 +33,8 @@ export class AuthService {
       user?.passwordHash ?? null,
       password,
     );
-    if (!user || !passwordMatches || user.disabledAt !== null) {
-      this.attempts.recordFailure(email);
+    if (!user || !passwordMatches || user.disabledAt !== null)
       return { kind: 'invalid_credentials' };
-    }
 
     this.attempts.clear(email);
 

@@ -57,6 +57,18 @@ describe('sign-in rate limit', () => {
     expect(setCookies(right)).toEqual([]);
   });
 
+  it('lets only five of many parallel wrong passwords be checked', async () => {
+    const ana = await createUser(app);
+    const statuses = (
+      await Promise.all(
+        Array.from({ length: 20 }, () => login(ana.email, 'not the password')),
+      )
+    ).map((res) => res.status);
+
+    expect(statuses.filter((status) => status === 401)).toHaveLength(5);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(15);
+  });
+
   it('rounds Retry-After up to whole seconds', async () => {
     const ana = await createUser(app);
     fakeDate(T);

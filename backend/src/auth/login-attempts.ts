@@ -18,21 +18,24 @@ interface Window {
 export class LoginAttempts {
   private readonly windows = new Map<string, Window>();
 
-  /** Seconds until the email may try again, or null when it isn't blocked. */
-  retryAfterSeconds(email: string): number | null {
-    const window = this.windows.get(email);
-    const time = now().getTime();
-    if (!window || window.failures < MAX_FAILURES || isExpired(window, time))
-      return null;
-    return Math.max(1, Math.ceil((window.start + WINDOW_MS - time) / 1000));
-  }
-
-  recordFailure(email: string): void {
+  /**
+   * Seconds until the email may try again when it's blocked. Otherwise counts
+   * this attempt as a failure and returns null; a successful sign-in then
+   * clears the count.
+   *
+   * Checking and counting happen in one synchronous call. Counting after the
+   * password check's awaits would let parallel attempts all pass the check
+   * before any failure is counted.
+   */
+  begin(email: string): number | null {
     const time = now().getTime();
     this.sweep(time);
     const window = this.windows.get(email);
+    if (window && window.failures >= MAX_FAILURES)
+      return Math.max(1, Math.ceil((window.start + WINDOW_MS - time) / 1000));
     if (window) window.failures++;
     else this.windows.set(email, { start: time, failures: 1 });
+    return null;
   }
 
   clear(email: string): void {

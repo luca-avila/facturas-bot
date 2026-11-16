@@ -98,12 +98,15 @@ These were checked against the installed packages and the npm registry on 2026-1
 
 **Rate limiter**
 - An in-memory `LoginAttempts` provider: a `Map` from normalized email to `{ windowStart, failures }`.
-- On a failure:
-  - With no entry, or an expired one, it starts a window `{ now, 1 }`.
-  - Otherwise it increments `failures`.
+- `begin(email)` checks and counts in one synchronous call, before sign-in awaits anything:
+  - If the email is blocked, it returns the seconds to wait and counts nothing.
+  - Otherwise it counts the attempt as a failure up front. With no entry, or an expired one, it starts a window `{ now, 1 }`. Otherwise it increments `failures`.
+  - A successful sign-in then clears the count.
+  - Why up front: counting after the user lookup and the password check let parallel attempts all pass the check before any failure was counted (40 parallel wrong passwords gave 40 × 401). Decided by the human on 2026-11-16, over tracking in-flight attempts separately.
+  - The cost: an attempt that ends in a 500 stays counted. Five during a database outage block the email for the rest of the window, or until a restart.
 - An email is blocked while `now < windowStart + 15 min` and `failures >= 5`.
 - `Retry-After` is the seconds left in the window, rounded up, at least 1.
-- Expired entries are swept when a failure is recorded, so the map can't grow without bound.
+- Expired entries are swept on every `begin`, so the map can't grow without bound.
 - It reads time from `now()`.
 - One backend process means one counter. A restart resets it.
 
@@ -212,9 +215,9 @@ Login uses `@HttpCode(200)` and logout `@HttpCode(204)`, since Nest's POST defau
 
 **Sign-in order** (`AuthService.signIn`). The order matters, so implement it as listed:
 1. Normalize the email.
-2. If `LoginAttempts` blocks it, return 429. Don't look up the user or verify the password.
+2. Call `LoginAttempts.begin`, before any await. If it blocks the email, return 429. Don't look up the user or verify the password. Otherwise the attempt is already counted as a failure.
 3. Look up the user. Verify the password against their hash, or against the dummy hash when there's no user.
-4. If there's no user, the password is wrong, or `disabled_at` is set: record a failure, return 401.
+4. If there's no user, the password is wrong, or `disabled_at` is set: return 401. The failure was counted in step 2.
 5. Otherwise, clear that email's failures, issue the session cookie from the row read in step 3, and return 200.
 
 **Every request** (`SessionGuard`, global):
@@ -319,6 +322,7 @@ Users are created through `UsersService`. Frontend tests go through `api.ts`, wi
 - Failures count per normalized email: `Ana@Example.com` and ` ana@example.com` share one count.
 - An unknown email gets blocked after five failures too, so being blocked doesn't reveal whether an account exists.
 - Four failures, then a success, then four more failures: Ana still gets in. The success reset the count.
+- Twenty wrong passwords for Ana sent in parallel: exactly five get 401, the other fifteen get 429.
 
 **Cookie**
 - The `session` cookie is `HttpOnly`, `SameSite=Strict`, `Path=/api`, `Secure`, with a 30-day `Max-Age`.
@@ -496,7 +500,7 @@ One commit per step. Run the backend steps with `docker compose up -d db`. "Veri
 - `SessionGuard`: the order of checks, that it throws instead of returning `false`, and the renewal.
 - Token verification: the algorithms, `currentDate`, and the `passwordSetAt` equality.
 - The cookie options, and clearing on logout.
-- `AuthService.signIn`: the limiter before any lookup, the dummy hash, and recording failures.
+- `AuthService.signIn`: the limiter counts before any await, the dummy hash, and clearing on success.
 - `configureApp`: JSON only, the prefix, `cookie-parser`.
 - The `start:dev` script.
 - The route-enumeration test.
