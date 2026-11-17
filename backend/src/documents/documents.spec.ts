@@ -443,6 +443,8 @@ describe('documents', () => {
       const list = listRes.body as SupplierList;
       expect(list.suppliers.map((s) => s.balance)).toEqual(['100.00']);
 
+      // `before->>'deleted_at'` alone is also null when `before` is missing,
+      // so read its JSON type: 'null' only for a snapshot that has the key.
       const audit = await prisma.$queryRaw<
         {
           user_id: string;
@@ -450,14 +452,14 @@ describe('documents', () => {
           after_deleted_at: string | null;
         }[]
       >`
-        SELECT user_id::text, before->>'deleted_at' AS before_deleted_at,
+        SELECT user_id::text, jsonb_typeof(before->'deleted_at') AS before_deleted_at,
                after->>'deleted_at' AS after_deleted_at
         FROM audit_log
         WHERE entity = 'documents' AND entity_id = ${deleted}::uuid AND action = 'delete'`;
       expect(audit).toEqual([
         {
           user_id: ana.id,
-          before_deleted_at: null,
+          before_deleted_at: 'null',
           after_deleted_at: expect.stringMatching(
             /^2026-11-09T16:30:00/,
           ) as string,
