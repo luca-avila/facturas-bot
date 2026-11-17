@@ -9,3 +9,4 @@ Format: `- YYYY-MM-DD | rule or category | what was wrong`
 - 2026-11-14 | tests | the HS256 pin in session verification had no test: the alg none test passes without it, because jose never accepts none
 - 2026-11-14 | tests | UsersService's refuses-invalid-input table counted rows for an email the invalid-email cases never sent, so their writes-nothing check always passed
 - 2026-11-17 | D2 | the delete audit test read before->>'deleted_at' as null, which a missing before snapshot also gives, so a delete entry without its before row passed
+- 2026-11-17 | tests | nothing in the invariant 7 tests said documents without a number never collide; dropping the index's number_normalized IS NOT NULL only failed balances.spec, whose fixtures happened to give one supplier two numberless documents

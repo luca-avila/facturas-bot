@@ -150,6 +150,30 @@ describe('documents table', () => {
       );
     });
 
+    // NULLS NOT DISTINCT would make these collide without the index's
+    // `number_normalized IS NOT NULL`.
+    it.each([
+      [
+        'two opening balances',
+        { ...openingBalance, due_date_source: 'manual' },
+      ],
+      [
+        'two delivery notes without a number',
+        {
+          type: 'delivery_note',
+          letter: null,
+          number: null,
+          number_normalized: null,
+        },
+      ],
+    ])('lets %s from one supplier through', async (_, overrides) => {
+      const supplierId = await newSupplier();
+      await insert(reviewedInvoice(supplierId, overrides));
+      await expect(
+        insert(reviewedInvoice(supplierId, overrides)),
+      ).resolves.toEqual(expect.any(String));
+    });
+
     it('lets one in error through', async () => {
       const supplierId = await newSupplier();
       await insert(reviewedInvoice(supplierId));
