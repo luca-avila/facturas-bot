@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
-import type { Response } from 'supertest';
+import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/configure-app.js';
 import { UsersService } from '../src/users/users.service.js';
@@ -72,4 +72,18 @@ export async function createUser(
   };
   const { id } = await app.get(UsersService).create({ ...user, role: 'staff' });
   return { ...user, id };
+}
+
+/** Signs the user in and returns the `session` cookie value. */
+export async function signIn(
+  app: NestExpressApplication,
+  user: TestUser,
+): Promise<string> {
+  const res = await request(app.getHttpServer())
+    .post('/api/auth/login')
+    .send({ email: user.email, password: user.password })
+    .expect(200);
+  const session = sessionCookie(res);
+  if (!session) throw new Error('Sign-in set no session cookie.');
+  return session;
 }
