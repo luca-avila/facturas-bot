@@ -1,6 +1,6 @@
 # System design
 
-> **Status:** agreed for the MVP, 2026-11-06. Decision 5 revised to individual accounts, 2026-11-07. This is the working document for the design: iterate here, and let `plans/` turn it into work. If it disagrees with the README, this file wins.
+> **Status:** agreed for the MVP, 2026-11-06. Decision 5 revised to individual accounts, 2026-11-07. Screens, filters and the rules the wireframes raised settled, 2026-11-16. This is the working document for the design: iterate here, and let `plans/` turn it into work. If it disagrees with the README, this file wins.
 >
 > **This repo is public.** Never write real supplier names, CUITs or amounts here or in any other committed file.
 
@@ -237,6 +237,8 @@ supplier.balance       = not_due + overdue − credit
 - Status applies to the document types that receive applications. Credit notes show *Disponible* or *Aplicada* instead.
 - A partly paid document keeps its status, and the UI adds a *Pago parcial* badge with what's left.
 - An opening balance with no due date stays pending.
+- `balance` is negative when credit is larger than the debt: the supplier owes the restaurant.
+- The frontend never computes these values, not even to preview a change. A screen that shows the effect of a change before it's saved, such as the payment split, applying credit or the due dates a new term would give, gets it from a backend preview that runs the same code as the save.
 
 ## Due dates
 
@@ -246,9 +248,10 @@ The supplier's term is the source of truth, as confirmed by the restaurant:
 due_date = issue_date + suppliers.payment_term_days
 ```
 
-- It applies to invoices and delivery notes. Credit notes and opening balances don't need a term.
+- It applies to invoices and delivery notes. Credit notes never get a due date. An opening balance never uses the term, because it adds up many documents: its due date is typed, or left empty.
 - It's resolved once and stored, so changing a term doesn't touch existing documents.
-- A supplier without a term sends the document to `error` with `supplier_term_missing`, so a new supplier's first document always stops there. A person sets the term once, which also re-checks that supplier's other stuck documents.
+- Correcting the issue date of a document whose `due_date_source` is `supplier_term` recomputes its due date with the term it was created with, its due date minus its old issue date, so a term changed since then still doesn't touch it. A `manual` due date doesn't move.
+- A supplier without a term sends the document to `error` with `supplier_term_missing`, so a new supplier's first document always stops there. A person sets the term once, which re-checks that supplier's documents in `error`, including the one being looked at. The ones that pass become `unreviewed`, not `reviewed`: setting a term doesn't confirm each document's data.
 - The tray suggests a term from what's printed on the document, read from `raw_output`, but a person always confirms it.
 - A person can override the date of a single document (`manual`).
 
@@ -327,11 +330,24 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 
 UI text is in Spanish.
 
-- **Resumen:** one row per supplier with *Sin vencer*, *Vencido* and *Total*, like the spreadsheet's summary, plus the warning about *Error* documents.
-- **Proveedor:** the supplier's account: documents, payments, credit and term.
-- **A resolver:** the *Error* tray, showing what's wrong with each document in plain Spanish.
-- **Documento:** the image next to the data, to fix or confirm it, with who uploaded it and who reviewed it.
-- **Pagos:** record a payment and distribute it. The UI suggests oldest-due first, as the restaurant does today, and every row can be edited. What's left stays as credit. *Marcar como pagado* is a shortcut that creates the payment and its application together.
+Wireframes for these screens, and for sign-in, upload and manual entry, are in [`design/wireframes/`](design/wireframes/). They settle layout and Spanish copy. This file settles behavior: where a wireframe disagrees with it, this file wins, and the proposals in *4 Flujos y propuestas* aren't decisions until they're written here.
+
+- **Resumen:** one row per supplier with *Sin vencer*, *Vencido*, *Crédito* and *Total*, like the spreadsheet's summary plus a credit column, so that *Sin vencer* + *Vencido* − *Crédito* = *Total*. A totals row adds them up, from the same backend query. It searches suppliers by name or legal name, and sorts by most overdue (the default), A–Z or largest total. It also warns about *Error* documents. [Wireframe](design/wireframes/1%20Base%20y%20Resumen.dc.html#s2).
+- **Proveedor:** the supplier's account: documents, payments, credit and term. Documents are filtered by payment status, *Con saldo* by default, so paid ones are hidden. Existing credit, from a payment's leftover or a credit note, is applied from the *Crédito a favor* card, with the same split as *Pagos*. [Wireframe](design/wireframes/1%20Base%20y%20Resumen.dc.html#s3).
+- **A resolver:** the *Error* tray, showing what's wrong with each document in plain Spanish. [Wireframe](design/wireframes/3%20Resolver%20y%20Pagos.dc.html#s6).
+- **Documento:** the image next to the data, to fix or confirm it, with who uploaded it and who reviewed it. Only the header can be edited: supplier, type, letter, number, dates, subtotal, total and notes. Lines and taxes are shown as read: when they don't add up and the header is right, the issue is accepted. [Wireframe](design/wireframes/2%20Subir%20y%20Documento.dc.html#s5).
+- **Pagos:** record a payment and distribute it. The app suggests oldest-due first, as the restaurant does today, and every row can be edited. What's left stays as credit. *Marcar como pagado* is a shortcut that creates the payment and its application together. The list of payments is filtered by supplier. [Wireframe](design/wireframes/3%20Resolver%20y%20Pagos.dc.html#s7).
+- **Subidas:** everything uploaded in the last 7 days, in any status, filtered by *Mías* or *Todas*. Documents in *Procesando* always show, however old, because no other screen lists them. [Wireframe](design/wireframes/2%20Subir%20y%20Documento.dc.html#4g).
+
+These are the only searches and filters in the MVP.
+
+Where the wireframes differ from this file on purpose:
+
+- **Opening balance (8a):** its due date isn't computed from the term. See [Due dates](#due-dates).
+- **Live totals (6d, 7c–7e, 7h, 7i):** what *Definir plazo*, the payment split and applying credit show before saving comes from a backend preview. See [Derived values](#derived-values).
+- **Filters (3d, 7a):** no filter by type and no date ranges.
+- **Applying credit (7h):** the only entry point is the *Crédito a favor* card. The other two can come later.
+- **Subidas (4g):** *Procesando* documents stay listed after 7 days.
 
 ## Operations
 

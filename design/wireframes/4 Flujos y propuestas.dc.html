@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap"><style>body{margin:0;background:#D9DADC;font-family:'IBM Plex Sans',system-ui,sans-serif;color:#2B2D31;font-variant-numeric:tabular-nums}a{color:#2B2D31}a:hover{color:#000}.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}.dv-tid{font:600 10px 'IBM Plex Mono',monospace;padding:3px 7px;background:#2B2D31;color:#fff;border-radius:4px;text-decoration:none}.dv-tname{font:600 15px/1.2 'IBM Plex Sans',sans-serif;color:#2B2D31}.dv-oid{font:600 10.5px 'IBM Plex Mono',monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#2B2D31;border-radius:5px;text-decoration:none}</style></helmet>
+
+<section class="dv-turn" id="idx" style="padding-bottom:20px">
+<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px"><strong style="margin-right:8px">Wireframes · Cuentas de proveedores</strong><a href="1%20Base%20y%20Resumen.dc.html" style="white-space:nowrap;padding:4px 10px;border-radius:6px;background:#fff">1 Base y Resumen</a><a href="2%20Subir%20y%20Documento.dc.html" style="white-space:nowrap;padding:4px 10px;border-radius:6px;background:#fff">2 Subir y Documento</a><a href="3%20Resolver%20y%20Pagos.dc.html" style="white-space:nowrap;padding:4px 10px;border-radius:6px;background:#fff">3 A resolver, Pagos y Carga</a><span style="white-space:nowrap;padding:4px 10px;border-radius:6px;background:#2B2D31;color:#fff">4 Flujos y propuestas</span></div>
+</section>
+
+<section class="dv-turn" id="flujos">
+<div class="dv-thd"><a class="dv-tid" href="#flujos">F</a><span class="dv-tname">Flujos clave · cada paso enlaza a su pantalla</span></div>
+<div style="display:flex;flex-direction:column;gap:22px;max-width:1240px">
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">1 · Foto de una factura de 2 páginas → Sin revisar</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#4a">4a</a>Toca <i>Subir</i>, saca la página 1 y la 2.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#4b">4b</a>Revisa el orden. <i>Subir documento</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#4c">4c</a>Barra de progreso.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5a">5a</a><i>Procesando</i>: “Leyendo el documento…”. Puede salir; queda en <i>Subidas</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5b">5b</a>Pasa los controles: <i>Sin revisar</i>, ya suma al saldo.</div>
+</div></div>
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">2 · Primer documento de un proveedor nuevo → Definir plazo</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5a">5a</a>Sube una factura de Bebidas Norte.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5d">5d</a><i>Error</i>: no tiene plazo de pago. Sugerencia: 30 días.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#6a">6a</a>En <i>A resolver</i>, agrupado: “2 documentos esperan un plazo”.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#6d">6d</a>Confirma 30 días; ve qué vencimientos van a quedar.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#6c">6c</a>Los 2 salen de <i>Error</i> y pasan a <i>Sin revisar</i>.</div>
+</div></div>
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">3 · Transferencia repartida entre dos facturas, con crédito</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="1%20Base%20y%20Resumen.dc.html#3a">3a</a>En Río Sur, <i>Registrar pago</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#7b">7b</a>$ 120.000,00 · Transferencia · TRF-884120.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#7c">7c</a>La app sugiere el reparto por vencimiento.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#7d">7d</a>Ajusta las filas: quedan $ 5.000,00 como crédito a favor.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#7f">7f</a>Resultado: una <i>Pagado</i>, la otra con <i>Pago parcial</i>.</div>
+</div></div>
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">4 · Marcar como pagado desde un documento</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5b">5b</a>En el documento, <i>Marcar como pagado</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#7g">7g</a>Hoja: medio, fecha, referencia. Monto fijo.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5e">5e</a>El documento queda <i>Pagado</i> con su pago aplicado.</div>
+</div></div>
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">5 · Revisar un documento Sin revisar y corregir una fecha</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="1%20Base%20y%20Resumen.dc.html#3a">3a</a>Ve el punto hueco en la lista. Lo abre.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5c">5c</a>Compara con la foto (en escritorio, lado a lado: <a class="dv-oid" href="2%20Subir%20y%20Documento.dc.html#5h">5h</a>).</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="2%20Subir%20y%20Documento.dc.html#5b">5b</a>Corrige la fecha de emisión; el botón pasa a <i>Guardar</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><span style="font:600 10.5px 'IBM Plex Mono',monospace;color:#62656C">RESULTADO</span>Controles OK → <i>Revisado por Martín · fecha y hora</i>. El vencimiento se recalcula con el plazo.</div>
+</div></div>
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">6 · Alta de un proveedor desde la planilla</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="1%20Base%20y%20Resumen.dc.html#2d">2d</a><i>+ Proveedor nuevo</i> en Resumen.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="1%20Base%20y%20Resumen.dc.html#9a">9a</a>Nombre, razón social, CUIT, plazo.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="1%20Base%20y%20Resumen.dc.html#3c">3c</a>Cuenta vacía → <i>Cargar saldo inicial</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#8a">8a</a>Saldo vencido → <i>Guardar y cargar otro</i> → saldo sin vencer.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="1%20Base%20y%20Resumen.dc.html#3a">3a</a>La cuenta coincide con la fila de la planilla.</div>
+</div></div>
+
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px"><b style="font-size:15px">7 · Posible duplicado</b>
+<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;font-size:13px">
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#6b">6b</a>En <i>A resolver</i>: “Puede ser un duplicado”. <i>Comparar</i>.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><a class="dv-oid" style="align-self:flex-start" href="3%20Resolver%20y%20Pagos.dc.html#6e">6e</a>Los dos lado a lado, diferencias resaltadas.</div><span style="align-self:center;color:#8F9197">→</span>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><span style="font:600 10.5px 'IBM Plex Mono',monospace;color:#62656C">A</span><i>Aceptar igual</i>: si era el último problema, queda <i>Revisado</i> y suma al saldo.</div>
+<div style="width:170px;padding:10px;border-radius:8px;background:#F2F2F3;display:flex;flex-direction:column;gap:6px"><span style="font:600 10.5px 'IBM Plex Mono',monospace;color:#62656C">B</span><i>Descartar el nuevo</i>: desaparece; el existente no cambia.</div>
+</div></div>
+</div>
+</section>
+
+<section class="dv-turn" id="propuestas">
+<div class="dv-thd"><a class="dv-tid" href="#propuestas">P</a><span class="dv-tname">Preguntas abiertas · propuestas</span></div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px;max-width:1240px;font-size:14px;line-height:1.55">
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:8px"><b>1 · ¿Dónde viven los Procesando?</b><span>Sección <i>Subidas</i> en la barra principal: lo subido en los últimos 7 días, en cualquier estado, con filtro Mías/Todas. Después de subir, se ve el documento en <i>Procesando</i>; si la persona sale, lo encuentra ahí.</span><span style="display:flex;gap:6px"><a class="dv-oid" href="2%20Subir%20y%20Documento.dc.html#4g">4g</a><a class="dv-oid" href="2%20Subir%20y%20Documento.dc.html#5a">5a</a></span></div>
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:8px"><b>2 · Aplicar crédito existente más tarde</b><span>Un solo repartidor, el mismo del paso 2 de pagos. Entradas: la tarjeta <i>Crédito a favor</i> del proveedor, la fila del pago o nota de crédito con saldo, y un enlace “Usar crédito a favor” en cada documento abierto de un proveedor con crédito.</span><span style="display:flex;gap:6px"><a class="dv-oid" href="3%20Resolver%20y%20Pagos.dc.html#7h">7h</a></span></div>
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:8px"><b>3 · Total cuando hay crédito</b><span>De acuerdo: columna <i>Crédito</i> en Resumen, en negativo, para que Sin vencer + Vencido − Crédito = Total. En móvil el crédito aparece en la segunda línea de la tarjeta solo cuando no es cero.</span><span style="display:flex;gap:6px"><a class="dv-oid" href="1%20Base%20y%20Resumen.dc.html#2d">2d</a><a class="dv-oid" href="1%20Base%20y%20Resumen.dc.html#2a">2a</a></span></div>
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:8px"><b>4 · Filtros y búsqueda mínimos</b><span><b>Resumen:</b> buscar proveedor (nombre o razón social) y orden. <b>Proveedor:</b> estado de pago (por defecto “Con saldo”), tipo y rango de fecha de emisión. <b>Pagos:</b> proveedor y rango de fechas. <b>Subidas:</b> Mías/Todas. Nada más en el MVP.</span><span style="display:flex;gap:6px"><a class="dv-oid" href="1%20Base%20y%20Resumen.dc.html#3d">3d</a><a class="dv-oid" href="3%20Resolver%20y%20Pagos.dc.html#7a">7a</a></span></div>
+<div style="background:#fff;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:8px"><b>5 · Editar ítems e impuestos</b><span>MVP: solo el encabezado es editable; ítems e impuestos se muestran como se leyeron y las diferencias se aceptan con “Aceptar como está”. Variante con grilla editable y chequeo en vivo, solo escritorio, para una etapa posterior.</span><span style="display:flex;gap:6px"><a class="dv-oid" href="2%20Subir%20y%20Documento.dc.html#5h">5h</a><a class="dv-oid" href="2%20Subir%20y%20Documento.dc.html#5i">5i</a></span></div>
+</div>
+</section>
+</x-dc>
+</body>
+</html>

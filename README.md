@@ -77,6 +77,7 @@ A few choices worth explaining:
 ```
 .
 ├── backend/            # NestJS API
+├── design/wireframes/  # Screen wireframes from Claude Design
 ├── frontend/           # React + Vite app
 ├── plans/              # Implementation plans
 ├── docker-compose.yml
