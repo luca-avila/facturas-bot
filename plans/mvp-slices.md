@@ -49,7 +49,8 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - Changes to documents and terms write `audit_log` in the same transaction (D2).
   - Every enum has an exhaustive set of Spanish labels.
   - `Money.fromString` rejects more than 12 integer digits, the most `numeric(14,2)` holds. Past that, `decimal.js` rounds to its default 20 significant digits, so `add` would round.
-  - Manual entry refuses to save when invariant 1 or 7 would fail, for example an invoice from a supplier with no term and no typed due date. Whether more checks run is [question 1](#open-questions).
+  - Manual entry refuses to save when invariant 1 or 7 would fail, for example an invoice from a supplier with no term and no typed due date. No other check runs ([question 1](#open-questions)).
+  - Nothing limits how many opening balances a supplier has ([question 13](#open-questions)).
 - Later: invariant 6 in slice 3, and the validation codes in slices 5 and 7.
 
 **Acceptance.**
@@ -293,6 +294,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - `totals_mismatch`: skipped when the document has no taxes.
   - `lines_mismatch`: the sum of lines matches neither `subtotal` nor `total`. Skipped when there are no lines.
   - `wrong_recipient`: see [question 9](#open-questions).
+  - Whether manual entry checks `duplicate_suspected`: see [question 1](#open-questions).
   - Equal amounts alone never make a duplicate. There's no `base × rate` check and no per-line `quantity × unit_price` check.
   - Accepting an issue marks it as accepted. Once every remaining issue is accepted, the document becomes `reviewed` by whoever accepted the last one. Blocking codes can't be accepted.
 
@@ -367,7 +369,9 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 ## Open questions
 
-1. **Checks on manual entry** (slice 2). Manual documents start as `reviewed`, but the design doesn't say which checks run when someone types one in. The plan only applies what invariants 1 and 7 force. Should `duplicate_suspected` or `supplier_term_missing` apply too? If so, where does the document go when one fails, given it can't start in `error`?
+1. **Checks on manual entry** (slices 2 and 7). Manual documents start as `reviewed`, so they can't start in `error`.
+   - Answered: in slice 2, manual entry only applies what invariants 1 and 7 force. `supplier_term_missing` needs no check of its own, because invariant 1 already makes the form ask for a term or a typed due date.
+   - Should manual entry check `duplicate_suspected` once slice 7 adds it? The proposal is a warning in the form that asks whether to save anyway, not a new status.
 2. **A failed re-check on *Sin revisar*** (slice 6). If saving leaves a blocking issue, does the document go to `error`, or is the save rejected? The document may already have applications. In `error`, it drops out of the balance while the payments applied to it stay used up.
 3. **Changing money after the fact** (slice 3). Can a payment be edited or deleted once it's applied? Can an application be removed or changed, given the table has no `deleted_at` or `updated_at`? Does invariant 6 also protect a credit note that has already given credit? Slice 3 ships without these actions until this is answered.
 4. **Applying existing credit** (slice 3). Answered: from the *Crédito a favor* card in *Proveedor*, with the same split as *Pagos*.
@@ -382,7 +386,9 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
     - Answered: a corrected issue date recomputes the due date with the term the document was created with, not the supplier's current one.
 11. **Re-extraction** (slice 6). Retry is planned only for `extraction_failed`, which has no data to overwrite. Is re-extracting a document that already has data part of the MVP? It's a one-way door.
 12. **Filters and search** (slices 2 and 3). Answered: search and sort in *Resumen* (slice 2), the payment-status filter in *Proveedor* and the supplier filter in *Pagos* (slice 3), and *Mías* or *Todas* in *Subidas* (slice 4). See [Screens](../system-design.md#screens).
-13. **Opening balances** (slices 2 and 3). Is "up to two per supplier" enforced, or is it just how they're meant to be used? Where do documents with no due date go in the oldest-due-first suggestion?
+13. **Opening balances** (slices 2 and 3).
+    - Answered: "up to two per supplier" is how they're meant to be used, not a rule. Nothing enforces it: a unique index can't tell the overdue one from the one that isn't, since only their due dates differ, and they're typed in once, at the start.
+    - Where do documents with no due date go in the oldest-due-first suggestion? This is for slice 3.
 14. **Suppliers created from a misread CUIT** (slice 5). A CUIT that's valid but wrong creates a supplier that can't be deleted or merged, and it stays in *Resumen*. Is that acceptable for the MVP?
 15. **Session length** (slice 1b). Answered: a session expires after 30 days without use, and each request renews it.
 16. **Where backups go** (slice 8). The storage outside the VPS isn't chosen yet, and sending backups there is data leaving the system. Where should they go?
