@@ -1,0 +1,103 @@
+import { bodyWithKeys, isStringOrNull, optionalText } from '../common/body.js';
+import { isIsoDate } from '../common/dates.js';
+import { type FieldError, invalidRequest } from '../common/field-errors.js';
+import { Money } from '../common/money.js';
+import { isUuid } from '../common/uuid.js';
+import { DocumentType } from '../generated/prisma/client.js';
+import { normalizeNumber } from './document-number.js';
+
+/** A manually entered document, checked and trimmed. */
+export interface ManualDocumentFields {
+  supplierId: string;
+  type: DocumentType;
+  letter: string | null;
+  number: string | null;
+  issueDate: string;
+  dueDate: string | null;
+  total: Money;
+  notes: string | null;
+}
+
+const KEYS = [
+  'supplierId',
+  'type',
+  'letter',
+  'number',
+  'issueDate',
+  'dueDate',
+  'total',
+  'notes',
+] as const;
+
+const LETTERS: readonly string[] = ['A', 'B', 'C', 'M', 'X'];
+
+function isDocumentType(value: unknown): value is DocumentType {
+  return Object.values<unknown>(DocumentType).includes(value);
+}
+
+function readTotal(total: string): Money | null {
+  try {
+    const money = Money.fromString(total);
+    return money.isPositive() ? money : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads a `DocumentInput` body. A missing key, a wrong JSON type, or a field
+ * the type never has (a letter or number on an opening balance, a due date on
+ * a credit note) is a malformed request. User mistakes come back together as
+ * field errors. Whether the supplier exists and needs a due date is checked
+ * in the transaction.
+ */
+export function parseDocumentInput(body: unknown): ManualDocumentFields {
+  const raw = bodyWithKeys(body, KEYS);
+  const { supplierId, type, letter, issueDate, dueDate, total, notes } = raw;
+  if (
+    typeof supplierId !== 'string' ||
+    !isUuid(supplierId) ||
+    !isDocumentType(type) ||
+    !(
+      letter === null ||
+      (typeof letter === 'string' && LETTERS.includes(letter))
+    ) ||
+    !isStringOrNull(raw.number) ||
+    typeof issueDate !== 'string' ||
+    !isStringOrNull(dueDate) ||
+    typeof total !== 'string' ||
+    !isStringOrNull(notes)
+  ) {
+    throw invalidRequest();
+  }
+  const number = optionalText(raw.number);
+  if (type === 'opening_balance' && (letter !== null || number !== null)) {
+    throw invalidRequest();
+  }
+  if (type === 'credit_note' && dueDate !== null) throw invalidRequest();
+
+  const errors: FieldError[] = [];
+  if (number !== null && normalizeNumber(number) === null) {
+    errors.push({ field: 'number', code: 'number_invalid' });
+  }
+  if (!isIsoDate(issueDate)) {
+    errors.push({ field: 'issueDate', code: 'issue_date_invalid' });
+  }
+  if (dueDate !== null && !isIsoDate(dueDate)) {
+    errors.push({ field: 'dueDate', code: 'due_date_invalid' });
+  }
+  const money = readTotal(total);
+  if (money === null) errors.push({ field: 'total', code: 'total_invalid' });
+
+  if (errors.length > 0 || money === null) throw invalidRequest(errors);
+  return {
+    supplierId,
+    type,
+    letter,
+    number,
+    issueDate,
+    dueDate,
+    total: money,
+    notes: optionalText(notes),
+  };
+}

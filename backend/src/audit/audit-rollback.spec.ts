@@ -23,13 +23,16 @@ describe('a failing audit write rolls back the change', () => {
   let app: NestExpressApplication;
   let prisma: PrismaService;
   let session: string;
+  let userId: string;
 
   beforeAll(async () => {
     app = await createTestApp((builder) =>
       builder.overrideProvider(AuditService).useClass(FailingAuditService),
     );
     prisma = app.get(PrismaService);
-    session = await signIn(app, await createUser(app));
+    const user = await createUser(app);
+    userId = user.id;
+    session = await signIn(app, user);
   });
 
   afterAll(async () => {
@@ -64,6 +67,59 @@ describe('a failing audit write rolls back the change', () => {
       .expect(500);
     const row = await prisma.supplier.findUniqueOrThrow({ where: { id } });
     expect(row.paymentTermDays).toBe(30);
+    expect(await prisma.auditLog.count({ where: { entityId: id } })).toBe(0);
+  });
+
+  it('entering a document returns 500 and leaves no document', async () => {
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    await http()
+      .post('/api/documents')
+      .set('Cookie', `session=${session}`)
+      .send({
+        supplierId,
+        type: 'invoice',
+        letter: 'A',
+        number: '0001-00004521',
+        issueDate: '2026-10-09',
+        dueDate: null,
+        total: '100.00',
+        notes: null,
+      })
+      .expect(500);
+    expect(
+      await prisma.document.count({
+        where: { supplierId, number: '0001-00004521' },
+      }),
+    ).toBe(0);
+  });
+
+  it('deleting a document returns 500 and leaves it counted', async () => {
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const { id } = await prisma.document.create({
+      data: {
+        type: 'invoice',
+        source: 'manual',
+        reviewStatus: 'reviewed',
+        supplierId,
+        issueDate: new Date('2026-10-09'),
+        dueDate: new Date('2026-11-08'),
+        dueDateSource: 'supplier_term',
+        total: '100.00',
+        createdById: userId,
+        reviewedById: userId,
+        reviewedAt: new Date('2026-11-09T12:00:00Z'),
+      },
+    });
+    await http()
+      .delete(`/api/documents/${id}`)
+      .set('Cookie', `session=${session}`)
+      .expect(500);
+    const row = await prisma.document.findUniqueOrThrow({ where: { id } });
+    expect(row.deletedAt).toBeNull();
     expect(await prisma.auditLog.count({ where: { entityId: id } })).toBe(0);
   });
 });
