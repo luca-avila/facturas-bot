@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { onUnauthorized } from './accounts-api'
 import { getSession, signOut, type SessionUser } from './api'
 import Shell from './Shell'
 import SignIn from './SignIn'
@@ -17,6 +18,9 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  // An expired session in any screen goes back to sign-in.
+  useEffect(() => onUnauthorized(() => setState({ kind: 'signed_out' })), [])
 
   async function handleSignOut() {
     await signOut()
