@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { now } from '../common/clock.js';
+import { isUuid } from '../common/uuid.js';
 import { Prisma, UserRole, type User } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { isValidEmail, normalizeEmail } from './email.js';
@@ -17,8 +18,6 @@ export interface DisableResult {
   /** True when the user was already disabled, so nothing changed. */
   alreadyDisabled: boolean;
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUserRole(role: string): role is UserRole {
   return Object.values<string>(UserRole).includes(role);
@@ -105,7 +104,7 @@ export class UsersService {
 
   /** Null for an id that isn't a UUID, so a bad id is "no user" and never a database error. */
   async findById(id: string): Promise<User | null> {
-    if (!UUID.test(id)) return null;
+    if (!isUuid(id)) return null;
     return this.prisma.user.findUnique({ where: { id } });
   }
 
