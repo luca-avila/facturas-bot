@@ -122,4 +122,47 @@ describe('a failing audit write rolls back the change', () => {
     expect(row.deletedAt).toBeNull();
     expect(await prisma.auditLog.count({ where: { entityId: id } })).toBe(0);
   });
+
+  /** A reviewed invoice of 100.00, written directly. */
+  async function newInvoice(supplierId: string): Promise<string> {
+    const { id } = await prisma.document.create({
+      data: {
+        type: 'invoice',
+        source: 'manual',
+        reviewStatus: 'reviewed',
+        supplierId,
+        issueDate: new Date('2026-10-09'),
+        dueDate: new Date('2026-11-08'),
+        dueDateSource: 'manual',
+        total: '100.00',
+        createdById: userId,
+        reviewedById: userId,
+        reviewedAt: new Date('2026-11-09T12:00:00Z'),
+      },
+    });
+    return id;
+  }
+
+  it('saving a payment with a split returns 500 and leaves no payment and no application', async () => {
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const documentId = await newInvoice(supplierId);
+    await http()
+      .post('/api/payments')
+      .set('Cookie', `session=${session}`)
+      .send({
+        supplierId,
+        amount: '100.00',
+        paidOn: '2026-11-09',
+        method: 'transfer',
+        reference: null,
+        valueDate: null,
+        notes: null,
+        applications: [{ documentId, amount: '100.00' }],
+      })
+      .expect(500);
+    expect(await prisma.payment.count({ where: { supplierId } })).toBe(0);
+    expect(await prisma.application.count({ where: { documentId } })).toBe(0);
+  });
 });

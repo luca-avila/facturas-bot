@@ -24,7 +24,7 @@ const MAIN = 'src/main.ts';
 const MONEY = 'src/common/money.ts';
 const CLOCK = 'src/common/clock.ts';
 const SPEC = 'src/common/clock.spec.ts';
-const APPLICATIONS = 'src/applications/split.ts';
+const APPLICATIONS = 'src/applications/applications.service.ts';
 
 const floatCode = {
   parseFloat: "export const x = parseFloat('1.5');\n",
