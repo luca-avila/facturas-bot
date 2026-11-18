@@ -13,6 +13,8 @@
   --pending: #6b6375;
   --pending-bg: rgba(107, 99, 117, 0.12);
   --warning: #8a5a00;
+  --paid: #1a7f37;
+  --paid-bg: rgba(26, 127, 55, 0.1);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
@@ -47,6 +49,8 @@
     --pending: #9ca3af;
     --pending-bg: rgba(156, 163, 175, 0.15);
     --warning: #fbbf24;
+    --paid: #4ade80;
+    --paid-bg: rgba(74, 222, 128, 0.15);
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
   }
@@ -406,6 +410,17 @@ button.link {
   background: var(--pending-bg);
 }
 
+.badge.paid,
+.badge.applied {
+  color: var(--paid);
+  background: var(--paid-bg);
+}
+
+.badge.available {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
 .quiet {
   font-size: 12px;
   color: var(--text);
@@ -470,4 +485,173 @@ label .hint {
 
 .pair .field:first-child {
   flex: 0 0 88px;
+}
+
+/* Header links */
+.shell-nav {
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.shell-nav a {
+  text-decoration: none;
+}
+
+.top-bar h1 {
+  margin: 0;
+}
+
+a.button.compact {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+/* Chips: payment method and payment-status filter */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.chip {
+  width: auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+button.chip.selected {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.chips-field legend,
+.label-text {
+  color: var(--text-h);
+  margin-bottom: 4px;
+  padding: 0;
+}
+
+.shell-header button.secondary {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.user-name {
+  min-width: 0;
+}
+
+.row-link {
+  font-size: 14px;
+}
+
+.row-detail.overdue {
+  color: var(--overdue);
+}
+
+/* Split rows and their footer */
+.split-edited {
+  font-size: 14px;
+}
+
+.split-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 0;
+}
+
+.split-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.split-row-label {
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.split-after {
+  color: var(--text-h);
+  font-weight: 500;
+}
+
+input.split-amount {
+  width: 128px;
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+input.split-amount[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.split-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+/* Radio list of credit sources */
+.radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radio-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.radio-row input {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.source-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section-label {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text);
+  margin: 12px 0 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
