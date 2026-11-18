@@ -11,3 +11,4 @@ Format: `- YYYY-MM-DD | rule or category | what was wrong`
 - 2026-11-17 | D2 | the delete audit test read before->>'deleted_at' as null, which a missing before snapshot also gives, so a delete entry without its before row passed
 - 2026-11-17 | tests | nothing in the invariant 7 tests said documents without a number never collide; dropping the index's number_normalized IS NOT NULL only failed balances.spec, whose fixtures happened to give one supplier two numberless documents
 - 2026-11-17 | tests | nothing tested that the P2002 mapping checks the index name: both services reporting any unique violation as duplicate_number or cuit_taken passed every test
+- 2026-11-18 | tests | the split order test issued its invoices in the order they fell due, so ordering the split by issue date alone still passed it

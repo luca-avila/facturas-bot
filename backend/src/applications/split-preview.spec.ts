@@ -100,7 +100,14 @@ describe('suggesting and previewing a split', () => {
   describe('order', () => {
     it('puts an undated opening balance at its issue date, between the invoices due either side', async () => {
       const supplier = await ledger.supplier();
-      const later = await ledger.invoice(supplier, '10.00', '2026-10-15');
+      // Issued, and created, in another order than they fall due, so neither
+      // issue date nor creation alone gives the expected order.
+      const later = await ledger.invoice(
+        supplier,
+        '10.00',
+        '2026-10-15',
+        '2026-09-01',
+      );
       const opening = await ledger.openingBalance(
         supplier,
         '40.00',
@@ -111,7 +118,7 @@ describe('suggesting and previewing a split', () => {
         supplier,
         '10.00',
         '2026-09-29',
-        '2026-09-01',
+        '2026-09-15',
       );
 
       const split = await preview(supplier, '1.00');
