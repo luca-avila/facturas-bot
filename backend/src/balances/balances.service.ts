@@ -10,6 +10,10 @@ import type {
   CreditStatus,
   DebtStatus,
   DocumentApplied,
+  PaymentApplication,
+  PaymentDetail,
+  PaymentList,
+  PaymentListRow,
   PaymentSummary,
   ReceivingType,
   SplitDocument,
@@ -65,6 +69,17 @@ interface PaymentRow {
   status: CreditStatus;
 }
 
+interface PaymentApplicationRow {
+  document_id: string;
+  type: PaymentApplication['type'];
+  letter: string | null;
+  number: string | null;
+  amount: string;
+  status: DebtStatus;
+  remaining: string;
+  partial: boolean;
+}
+
 const collator = new Intl.Collator('es', { sensitivity: 'base' });
 
 /** Lower case without accents, so `panaderia ñandu` finds `Panadería ÑANDÚ`. */
@@ -116,6 +131,14 @@ function toPaymentSummary(row: PaymentRow): PaymentSummary {
     createdByName: row.created_by_name,
     unapplied: money(row.unapplied).toString(),
     status: row.status,
+  };
+}
+
+function toPaymentListRow(row: PaymentRow): PaymentListRow {
+  return {
+    ...toPaymentSummary(row),
+    supplierId: row.supplier_id,
+    supplierName: row.supplier_name,
   };
 }
 
@@ -222,6 +245,59 @@ export class BalancesService {
         daysToDue: doc.days_to_due,
       })),
       payments: payments.map(toPaymentSummary),
+    };
+  }
+
+  /** Every payment that isn't deleted, or one supplier's, newest paid first. */
+  async listPayments(params: {
+    supplierId: string | null;
+  }): Promise<PaymentList> {
+    const where =
+      params.supplierId === null
+        ? Prisma.sql`TRUE`
+        : Prisma.sql`c.supplier_id = ${params.supplierId}::uuid`;
+    const rows = await this.prisma.$queryRaw<PaymentRow[]>(
+      this.paymentRows(where),
+    );
+    return { payments: rows.map(toPaymentListRow) };
+  }
+
+  /**
+   * A payment with what it applied to each document, and each document's
+   * state now, in split order. Null for an unknown, non-UUID or deleted id.
+   */
+  async payment(id: string): Promise<PaymentDetail | null> {
+    if (!isUuid(id)) return null;
+    const [[row], applications] = await this.prisma.$transaction(
+      [
+        this.prisma.$queryRaw<PaymentRow[]>(
+          this.paymentRows(Prisma.sql`c.id = ${id}::uuid`),
+        ),
+        this.prisma.$queryRaw<PaymentApplicationRow[]>`
+          WITH counted AS (${this.counted(today())})
+          SELECT c.id AS document_id, c.type, c.letter, c.number, x.amount::text AS amount,
+                 c.status, c.remaining::text AS remaining, c.partial
+          FROM applications x JOIN counted c ON c.id = x.document_id
+          WHERE x.payment_id = ${id}::uuid
+          ORDER BY c.sort_date, c.issue_date_value, c.created_at, c.id`,
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+    if (!row) return null;
+    return {
+      ...toPaymentListRow(row),
+      notes: row.notes,
+      applied: money(row.applied).toString(),
+      applications: applications.map((a) => ({
+        documentId: a.document_id,
+        type: a.type,
+        letter: a.letter,
+        number: a.number,
+        amount: money(a.amount).toString(),
+        status: a.status,
+        remaining: money(a.remaining).toString(),
+        partial: a.partial,
+      })),
     };
   }
 

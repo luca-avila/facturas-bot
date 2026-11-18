@@ -53,6 +53,12 @@ describe('every route', () => {
         'put /api/suppliers/:id',
         'post /api/documents',
         'delete /api/documents/:id',
+        'post /api/applications/preview',
+        'post /api/applications',
+        'post /api/payments',
+        'post /api/payments/mark-paid',
+        'get /api/payments',
+        'get /api/payments/:id',
       ]),
     );
   });

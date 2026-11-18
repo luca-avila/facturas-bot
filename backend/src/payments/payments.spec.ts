@@ -3,7 +3,11 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { createTestApp } from '../../test/app.js';
 import { Ledger, type SplitRowBody } from '../../test/ledger.js';
 import type { Split } from '../applications/applications.types.js';
-import type { SupplierList } from '../balances/balances.types.js';
+import type {
+  PaymentDetail,
+  PaymentList,
+  SupplierList,
+} from '../balances/balances.types.js';
 
 describe('saving a payment', () => {
   let app: NestExpressApplication;
@@ -382,6 +386,162 @@ describe('saving a payment', () => {
       reference: '0001-23',
       notes: null,
       createdById: ledger.ana.id,
+    });
+  });
+
+  it('acceptance 7: an eCheq keeps its reference and value date', async () => {
+    const supplier = await ledger.supplier();
+    const res = await save(
+      ledger.paymentBody(supplier, '500.00', [], {
+        method: 'echeq',
+        reference: '00012345',
+        valueDate: '2026-12-15',
+        notes: 'Entregado en mano',
+      }),
+    ).expect(201);
+    const { id } = res.body as { id: string };
+
+    const detail = await ledger.get(`/api/payments/${id}`).expect(200);
+    expect(detail.body).toEqual({
+      id,
+      supplierId: supplier,
+      supplierName: expect.stringMatching(/^Panadería /) as unknown,
+      amount: '500.00',
+      paidOn: '2026-11-09',
+      valueDate: '2026-12-15',
+      method: 'echeq',
+      reference: '00012345',
+      notes: 'Entregado en mano',
+      createdByName: 'Ana',
+      applied: '0.00',
+      unapplied: '500.00',
+      status: 'available',
+      applications: [],
+    });
+  });
+
+  describe('GET /api/payments', () => {
+    it('lists newest paid first, and filters by supplier with unapplied, status and author', async () => {
+      const supplier = await ledger.supplier();
+      const invoice = await ledger.invoice(supplier, '50.00', '2026-11-20');
+      const older = (
+        await save(
+          ledger.paymentBody(
+            supplier,
+            '50.00',
+            [{ documentId: invoice, amount: '50.00' }],
+            {
+              paidOn: '2026-11-01',
+            },
+          ),
+        ).expect(201)
+      ).body as { id: string };
+      const newer = await ledger.pay(supplier, '30.00');
+      const other = await ledger.pay(await ledger.supplier(), '10.00');
+
+      const res = await ledger
+        .get(`/api/payments?supplierId=${supplier}`)
+        .expect(200);
+      const list = res.body as PaymentList;
+      expect(list.payments.map((p) => p.id)).toEqual([newer, older.id]);
+      expect(list.payments).toMatchObject([
+        {
+          supplierId: supplier,
+          unapplied: '30.00',
+          status: 'available',
+          createdByName: 'Ana',
+          paidOn: '2026-11-09',
+        },
+        {
+          supplierId: supplier,
+          unapplied: '0.00',
+          status: 'applied',
+          createdByName: 'Ana',
+          paidOn: '2026-11-01',
+        },
+      ]);
+
+      const all = (await ledger.get('/api/payments').expect(200))
+        .body as PaymentList;
+      const ids = all.payments.map((p) => p.id);
+      expect(ids).toEqual(expect.arrayContaining([newer, older.id, other]));
+      expect(ids.indexOf(newer)).toBeLessThan(ids.indexOf(older.id));
+    });
+
+    it('gives an empty list for an unknown supplier', async () => {
+      const res = await ledger
+        .get(`/api/payments?supplierId=${randomUUID()}`)
+        .expect(200);
+      expect(res.body).toEqual({ payments: [] });
+    });
+
+    it.each([
+      ['a non-UUID supplierId', 'supplierId=nope'],
+      [
+        'a repeated supplierId',
+        `supplierId=${randomUUID()}&supplierId=${randomUUID()}`,
+      ],
+    ])('refuses %s with 400', async (_, query) => {
+      const res = await ledger.get(`/api/payments?${query}`).expect(400);
+      expect(res.body).toEqual({ errors: [] });
+    });
+  });
+
+  describe('GET /api/payments/:id', () => {
+    it('lists what it applied, in split order, with each document as it is now', async () => {
+      const { supplier, a, b } = await aAndB();
+      const id = await ledger.pay(supplier, '120.00', [
+        { documentId: b, amount: '20.00' },
+        { documentId: a, amount: '100.00' },
+      ]);
+      await ledger.pay(supplier, '10.00', [{ documentId: b, amount: '10.00' }]);
+
+      const res = await ledger.get(`/api/payments/${id}`).expect(200);
+      const detail = res.body as PaymentDetail;
+      expect(detail).toMatchObject({
+        amount: '120.00',
+        applied: '120.00',
+        unapplied: '0.00',
+        status: 'applied',
+      });
+      expect(detail.applications).toEqual([
+        {
+          documentId: a,
+          type: 'invoice',
+          letter: null,
+          number: null,
+          amount: '100.00',
+          status: 'paid',
+          remaining: '0.00',
+          partial: false,
+        },
+        {
+          documentId: b,
+          type: 'invoice',
+          letter: null,
+          number: null,
+          amount: '20.00',
+          status: 'pending',
+          remaining: '20.00',
+          partial: true,
+        },
+      ]);
+    });
+
+    it.each([
+      ['an unknown id', randomUUID()],
+      ['a non-UUID id', 'not-a-uuid'],
+    ])('returns 404 for %s', async (_, id) => {
+      await ledger.get(`/api/payments/${id}`).expect(404);
+    });
+
+    it('returns 404 for a deleted payment', async () => {
+      const id = await ledger.pay(await ledger.supplier(), '10.00');
+      await ledger.prisma.payment.update({
+        where: { id },
+        data: { deletedAt: new Date('2026-11-09T16:00:00Z') },
+      });
+      await ledger.get(`/api/payments/${id}`).expect(404);
     });
   });
 });

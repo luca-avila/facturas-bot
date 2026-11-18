@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ApplicationsService } from '../applications/applications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { now } from '../common/clock.js';
@@ -20,6 +21,7 @@ export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly applications: ApplicationsService,
   ) {}
 
   /** Saves a document a person typed in. It counts at once, as reviewed by them. */
@@ -87,12 +89,16 @@ export class DocumentsService {
     }
   }
 
-  /** Soft delete: the row stays, and stops counting. A deleted document is not found. */
+  /**
+   * Soft delete: the row stays, and stops counting. A deleted document is not
+   * found, and one with applications is refused (invariant 6).
+   */
   async delete(id: string, user: SessionUser): Promise<void> {
     if (!isUuid(id)) throw new NotFoundException();
     await this.prisma.$transaction(async (tx) => {
       const before = await this.audit.snapshot(tx, 'documents', id);
       if (before === null) throw new NotFoundException();
+      await this.applications.assertDocumentChange(tx, id, { delete: true });
       const { count } = await tx.document.updateMany({
         where: { id, deletedAt: null },
         data: { deletedAt: now() },

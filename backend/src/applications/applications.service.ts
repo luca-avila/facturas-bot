@@ -9,7 +9,11 @@ import {
   invalidRequest,
 } from '../common/field-errors.js';
 import { Money } from '../common/money.js';
-import type { Prisma } from '../generated/prisma/client.js';
+import type {
+  DocumentType,
+  Prisma,
+  ReviewStatus,
+} from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type {
   ApplyCreditInput,
@@ -20,6 +24,18 @@ import type {
 import { evaluate, suggest } from './split.js';
 
 const ZERO = Money.fromString('0');
+
+/** A delete, or the new values of the header fields invariant 6 protects. */
+export type DocumentChange =
+  | { delete: true }
+  | {
+      supplierId?: string;
+      type?: DocumentType;
+      total?: Money;
+      reviewStatus?: ReviewStatus;
+    };
+
+const COUNTED: readonly ReviewStatus[] = ['unreviewed', 'reviewed'];
 
 /** Who receives the split and how much it can give. */
 interface SplitContext {
@@ -166,6 +182,37 @@ export class ApplicationsService {
     ).filter((doc) => doc.id === documentId);
     if (row === undefined) throw refused;
     return { supplierId: document.supplierId, remaining: row.remaining };
+  }
+
+  /**
+   * Invariant 6, on both sides: while a document has applications, received
+   * or given, it isn't deleted, keeps its supplier and type, stays counted,
+   * and its total covers what it received and what it gave. Refuses with 409
+   * `document_has_applications`. Call it after locking the document. The
+   * `documents_keep_applied` trigger backs it up.
+   */
+  async assertDocumentChange(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+    change: DocumentChange,
+  ): Promise<void> {
+    const doc = await this.balances.documentApplied(tx, documentId);
+    if (doc === null || (doc.received.isZero() && doc.given.isZero())) return;
+    const breaks =
+      'delete' in change ||
+      (change.supplierId !== undefined &&
+        change.supplierId !== doc.supplierId) ||
+      (change.type !== undefined && change.type !== doc.type) ||
+      (change.reviewStatus !== undefined &&
+        !COUNTED.includes(change.reviewStatus)) ||
+      (change.total !== undefined &&
+        (change.total.compare(doc.received) < 0 ||
+          change.total.compare(doc.given) < 0));
+    if (breaks) {
+      throw conflict([
+        { field: 'document', code: 'document_has_applications' },
+      ]);
+    }
   }
 
   /** Locks the named documents in `id` order, so two writers can't wait on each other. */
