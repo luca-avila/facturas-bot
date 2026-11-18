@@ -253,7 +253,7 @@ due_date = issue_date + suppliers.payment_term_days
 - Correcting the issue date of a document whose `due_date_source` is `supplier_term` recomputes its due date with the term it was created with, its due date minus its old issue date, so a term changed since then still doesn't touch it. A `manual` due date doesn't move.
 - A supplier without a term sends the document to `error` with `supplier_term_missing`, so a new supplier's first document always stops there. A person sets the term once, which re-checks that supplier's documents in `error`, including the one being looked at. The ones that pass become `unreviewed`, not `reviewed`: setting a term doesn't confirm each document's data.
 - The tray suggests a term from what's printed on the document, read from `raw_output`, but a person always confirms it.
-- A person can override the date of a single document (`manual`).
+- A person can override the date of a single document (`manual`). On an invoice or delivery note it can't be earlier than the issue date (`due_date_before_issue`), which catches a mistyped year. An opening balance is exempt, because its overdue part is often typed with the cutover date as its issue date.
 
 Printed dates aren't used, and the samples show why. The term landed within a day of the date the restaurant actually uses in all five, and the printed date didn't:
 

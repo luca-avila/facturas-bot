@@ -35,6 +35,16 @@ function isDocumentType(value: unknown): value is DocumentType {
   return Object.values<unknown>(DocumentType).includes(value);
 }
 
+/**
+ * An invoice or delivery note can't fall due before it was issued, so a typed
+ * date like that is a typo, such as 2025 for 2026, that would make it overdue
+ * at once. An opening balance can: its overdue part is often typed with the
+ * cutover date as its issue date and a past due date.
+ */
+function dueBeforeIssueMatters(type: DocumentType): boolean {
+  return type === 'invoice' || type === 'delivery_note';
+}
+
 function readTotal(total: string): Money | null {
   try {
     const money = Money.fromString(total);
@@ -85,6 +95,13 @@ export function parseDocumentInput(body: unknown): ManualDocumentFields {
   }
   if (dueDate !== null && !isIsoDate(dueDate)) {
     errors.push({ field: 'dueDate', code: 'due_date_invalid' });
+  } else if (
+    dueDate !== null &&
+    isIsoDate(issueDate) &&
+    dueBeforeIssueMatters(type) &&
+    dueDate < issueDate
+  ) {
+    errors.push({ field: 'dueDate', code: 'due_date_before_issue' });
   }
   const money = readTotal(total);
   if (money === null) errors.push({ field: 'total', code: 'total_invalid' });

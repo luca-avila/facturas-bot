@@ -56,6 +56,7 @@ export const FIELD_ERROR_MESSAGES: Record<FieldErrorCode, string> = {
   issue_date_invalid: 'Ingresá una fecha de emisión válida.',
   due_date_invalid: 'Ingresá un vencimiento válido.',
   due_date_required: 'Este proveedor no tiene plazo de pago: ingresá el vencimiento o definí el plazo.',
+  due_date_before_issue: 'El vencimiento no puede ser anterior a la fecha de emisión. Revisá el año.',
   total_invalid: 'Ingresá un total mayor a cero, como 86.900,50.',
   duplicate_number: 'Ya existe un documento de este proveedor con el mismo tipo, letra y número.',
 }

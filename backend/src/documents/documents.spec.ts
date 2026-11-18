@@ -397,6 +397,74 @@ describe('documents', () => {
       });
     });
 
+    describe('a due date before the issue date', () => {
+      it.each(['invoice', 'delivery_note'])(
+        'refuses it on a %s with due_date_before_issue, and writes nothing',
+        async (type) => {
+          const supplier = await newSupplier(30);
+          const res = await post(
+            invoice(supplier, {
+              type,
+              issueDate: '2026-11-10',
+              dueDate: '2025-12-10',
+            }),
+          ).expect(400);
+          expect(res.body).toEqual({
+            errors: [{ field: 'dueDate', code: 'due_date_before_issue' }],
+          });
+          expect(await documentsOf(supplier)).toBe(0);
+        },
+      );
+
+      it('accepts a due date on the issue date', async () => {
+        const supplier = await newSupplier(30);
+        const id = await enter(
+          invoice(supplier, { issueDate: '2026-11-10', dueDate: '2026-11-10' }),
+        );
+        expect(await stored(id)).toMatchObject({
+          dueDate: '2026-11-10',
+          dueDateSource: 'manual',
+        });
+      });
+
+      it('accepts it on an opening balance, which counts as Vencido', async () => {
+        const supplier = await newSupplier(30);
+        const id = await enter(
+          invoice(supplier, {
+            type: 'opening_balance',
+            letter: null,
+            number: null,
+            issueDate: '2026-11-09',
+            dueDate: '2026-10-31',
+          }),
+        );
+        const doc = (await account(supplier)).documents.find(
+          (d) => d.id === id,
+        );
+        expect(doc?.status).toBe('overdue');
+      });
+
+      it('reports only due_date_invalid when the due date is not a date', async () => {
+        const supplier = await newSupplier(30);
+        const res = await post(
+          invoice(supplier, { issueDate: '2026-11-10', dueDate: '2026-02-30' }),
+        ).expect(400);
+        expect(res.body).toEqual({
+          errors: [{ field: 'dueDate', code: 'due_date_invalid' }],
+        });
+      });
+
+      it('reports only issue_date_invalid when the issue date is not a date', async () => {
+        const supplier = await newSupplier(30);
+        const res = await post(
+          invoice(supplier, { issueDate: '2026-13-01', dueDate: '2026-01-01' }),
+        ).expect(400);
+        expect(res.body).toEqual({
+          errors: [{ field: 'issueDate', code: 'issue_date_invalid' }],
+        });
+      });
+    });
+
     it('gives every field error at once', async () => {
       const supplier = await newSupplier(30);
       const res = await post(

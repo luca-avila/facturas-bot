@@ -315,7 +315,7 @@ interface DocumentInput {
 | `letter` | string or null | Null, or `A`, `B`, `C`, `M` or `X`. Null for an opening balance | Malformed |
 | `number` | string or null | Trimmed. Empty becomes null. Null for an opening balance (malformed otherwise). When set, it has at least one digit | `number_invalid` |
 | `issueDate` | string | A real date from 1900 to 2999, `YYYY-MM-DD`. The empty string counts as invalid | `issue_date_invalid` |
-| `dueDate` | string or null | Null, or a date with the same rules. Null for a credit note (malformed otherwise). Required when `resolveDueDate` says so | `due_date_invalid`, `due_date_required` |
+| `dueDate` | string or null | Null, or a date with the same rules. Null for a credit note (malformed otherwise). Required when `resolveDueDate` says so. On an invoice or delivery note, not earlier than `issueDate` | `due_date_invalid`, `due_date_required`, `due_date_before_issue` |
 | `total` | string | Read by `Money.fromString` (up to 12 integer digits and 2 decimals), and above zero | `total_invalid` |
 | `notes` | string or null | Trimmed. Empty becomes null | |
 
@@ -354,7 +354,7 @@ A document that breaks invariant 7 gets 409 `{ errors: [{ field: 'number', code:
   - `toDbDate(date: string): Date`: UTC midnight, for writing `@db.Date` fields.
 - `backend/src/common/uuid.ts`: `isUuid(value: string): boolean`.
 - `backend/src/common/field-errors.ts`
-  - `FieldErrorCode`: the 11 codes, `name_required`, `cuit_required`, `cuit_invalid`, `cuit_taken`, `payment_term_invalid`, `number_invalid`, `issue_date_invalid`, `due_date_invalid`, `due_date_required`, `total_invalid` and `duplicate_number`.
+  - `FieldErrorCode`: the 12 codes, `name_required`, `cuit_required`, `cuit_invalid`, `cuit_taken`, `payment_term_invalid`, `number_invalid`, `issue_date_invalid`, `due_date_invalid`, `due_date_required`, `due_date_before_issue`, `total_invalid` and `duplicate_number`.
   - `FieldError { field: string; code: FieldErrorCode }`.
   - Helpers that build the 400 and 409 exceptions with an `{ errors }` body.
 - `backend/src/audit/` (`AuditModule`, exports `AuditService`)

@@ -11,6 +11,7 @@ export type FieldErrorCode =
   | 'issue_date_invalid'
   | 'due_date_invalid'
   | 'due_date_required'
+  | 'due_date_before_issue'
   | 'total_invalid'
   | 'duplicate_number';
 
