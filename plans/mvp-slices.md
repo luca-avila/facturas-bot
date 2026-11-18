@@ -201,7 +201,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - **E1–E4.** No LLM call runs inside a transaction. `raw_output` is written once, and `prompt_version` is set. The result is written in one transaction that replaces the lines and taxes, and only if the document is still `processing`.
   - **Schema extras.** The Zod schema also asks for what the tables don't hold: the supplier's CUIT and printed name, the recipient's CUIT, any printed payment term (for slice 6's suggestion), and whether the photo is a document at all.
   - **Supplier.** A valid CUIT that isn't in the database creates the supplier, using the printed name. An invalid or missing one gives `supplier_unresolved`. `due_date` only comes from slice 2's function.
-  - **Checks (V1).** `extraction_failed`, `unsupported_document`, `supplier_unresolved`, `missing_total`, `missing_issue_date`, `supplier_term_missing` and `duplicate_number`. `duplicate_number` compares against the same set of documents as invariant 7. A unique-index violation on write also becomes `duplicate_number`.
+  - **Checks (V1).** `extraction_failed`, `unsupported_document`, `supplier_unresolved`, `missing_total`, `missing_issue_date`, `supplier_term_missing` and `duplicate_number`. `duplicate_number` compares against the same set of documents as invariant 7. A unique-index violation on write also becomes `duplicate_number`. `uniqueViolationIndex` only recognizes `P2002`, which Prisma's model API throws. A raw query (`$executeRaw`, `$queryRaw`) throws `P2010` for the same violation, so the worker writes documents through the model API, or extends the helper first and tests it with a real violation.
   - **Screens.** *A resolver* is read-only, *Resumen* warns about *Error* documents, and *Documento* shows the data next to the image.
   - **Audit.** The worker's `audit_log` entries have no `user_id`.
 - Later: fixing documents in slice 6, and the codes that can be accepted in slice 7.
@@ -217,6 +217,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - Mapping from invented LLM outputs, with the SDK client mocked.
 - A passing and a failing case for each code.
 - A printed due date or CAE expiry never reaches `due_date`.
+- A duplicate number that only the unique index catches, through the worker's own write, ends as `duplicate_number`, not as a failed attempt.
 - Claiming, leasing, retries and backoff, on a real Postgres.
 - Running a job twice leaves one set of lines and taxes.
 - Each failing stop reason counts as a failed attempt.

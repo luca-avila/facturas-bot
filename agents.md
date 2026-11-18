@@ -23,6 +23,7 @@ Orientation for coding agents working in this repo.
 - `backend/src/auth/`: sessions, sign-in and the global `SessionGuard`. `backend/src/users/`: `UsersService` and `normalizeEmail`, used by auth and by the `user:*` scripts.
 - `backend/test/test-cuits.ts`: `TEST_CUITS`, invented CUITs. Every CUIT in a test or fixture must come from there: the CUIT check (part of backend `npm run lint`, and in CI) fails on any other valid one. It also fails on any file that isn't UTF-8 text, such as an image, a PDF, a spreadsheet or UTF-16, unless `UNSCANNED_FILES` in `backend/scripts/check-cuits.ts` lists it.
 - Backend tests run against a real Postgres. Start it first with `docker compose up -d db`. They need nothing else: `JWT_SECRET` comes from the Vitest config.
+- After pulling a schema change, run `npx prisma generate` in `backend/`. The client in `backend/src/generated/` is gitignored and only regenerates on `npm install`. A stale one fails the tests with errors like `Cannot read properties of undefined (reading 'create')` on a model it doesn't know yet.
 
 ## Rules that are easy to miss
 
