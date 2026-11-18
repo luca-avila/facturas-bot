@@ -49,7 +49,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - Changes to documents and terms write `audit_log` in the same transaction (D2).
   - Every enum has an exhaustive set of Spanish labels.
   - `Money.fromString` rejects more than 12 integer digits, the most `numeric(14,2)` holds. Past that, `decimal.js` rounds to its default 20 significant digits, so `add` would round.
-  - Manual entry refuses to save when invariant 1 or 7 would fail, for example an invoice from a supplier with no term and no typed due date. No other check runs ([question 1](#open-questions)).
+  - Manual entry refuses to save when invariant 1 or 7 would fail, for example an invoice from a supplier with no term and no typed due date. The only other check is that an invoice or delivery note can't have a typed due date earlier than its issue date ([question 1](#open-questions)).
   - Nothing limits how many opening balances a supplier has ([question 13](#open-questions)).
 - Later: invariant 6 in slice 3, and the validation codes in slices 5 and 7.
 
@@ -201,7 +201,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - **E1–E4.** No LLM call runs inside a transaction. `raw_output` is written once, and `prompt_version` is set. The result is written in one transaction that replaces the lines and taxes, and only if the document is still `processing`.
   - **Schema extras.** The Zod schema also asks for what the tables don't hold: the supplier's CUIT and printed name, the recipient's CUIT, any printed payment term (for slice 6's suggestion), and whether the photo is a document at all.
   - **Supplier.** A valid CUIT that isn't in the database creates the supplier, using the printed name. An invalid or missing one gives `supplier_unresolved`. `due_date` only comes from slice 2's function.
-  - **Checks (V1).** `extraction_failed`, `unsupported_document`, `supplier_unresolved`, `missing_total`, `missing_issue_date`, `supplier_term_missing` and `duplicate_number`. `duplicate_number` compares against the same set of documents as invariant 7. A unique-index violation on write also becomes `duplicate_number`.
+  - **Checks (V1).** `extraction_failed`, `unsupported_document`, `supplier_unresolved`, `missing_total`, `missing_issue_date`, `supplier_term_missing` and `duplicate_number`. `duplicate_number` compares against the same set of documents as invariant 7. A unique-index violation on write also becomes `duplicate_number`. `uniqueViolationIndex` only recognizes `P2002`, which Prisma's model API throws. A raw query (`$executeRaw`, `$queryRaw`) throws `P2010` for the same violation, so the worker writes documents through the model API, or extends the helper first and tests it with a real violation.
   - **Screens.** *A resolver* is read-only, *Resumen* warns about *Error* documents, and *Documento* shows the data next to the image.
   - **Audit.** The worker's `audit_log` entries have no `user_id`.
 - Later: fixing documents in slice 6, and the codes that can be accepted in slice 7.
@@ -217,6 +217,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - Mapping from invented LLM outputs, with the SDK client mocked.
 - A passing and a failing case for each code.
 - A printed due date or CAE expiry never reaches `due_date`.
+- A duplicate number that only the unique index catches, through the worker's own write, ends as `duplicate_number`, not as a failed attempt.
 - Claiming, leasing, retries and backoff, on a real Postgres.
 - Running a job twice leaves one set of lines and taxes.
 - Each failing stop reason counts as a failed attempt.
@@ -251,6 +252,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
     - type the data in by hand
   - Only the header can be edited. Lines and taxes are read-only.
   - Correcting the issue date of a document whose due date came from the term recomputes it with the term it was created with, not the supplier's current one.
+  - A `manual` due date doesn't move, so a corrected issue date can leave it earlier than the issue date. On an invoice or delivery note that save is refused with `due_date_before_issue`, as in manual entry.
   - Invariant 6 still applies, and every change is audited with the user who made it.
 - Later: accepting issues in slice 7, and re-extracting a document that already has data ([question 11](#open-questions)).
 
@@ -267,7 +269,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - `reviewed` can never go to `error`.
 - Invariant 8 holds on every path.
 - Setting a term only touches that supplier's documents in *Error*, goes through the due-date function, and leaves them `unreviewed`.
-- A corrected issue date recomputes the due date with the original term, and leaves a `manual` due date alone.
+- A corrected issue date recomputes the due date with the original term, and leaves a `manual` due date alone. One that moves past a `manual` due date on an invoice or delivery note is refused.
 - A suggested term is never saved without a person confirming it.
 - `raw_output` doesn't change when a document is edited.
 - A retry keeps the earlier jobs.
@@ -371,6 +373,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 1. **Checks on manual entry** (slices 2 and 7). Manual documents start as `reviewed`, so they can't start in `error`.
    - Answered: in slice 2, manual entry only applies what invariants 1 and 7 force. `supplier_term_missing` needs no check of its own, because invariant 1 already makes the form ask for a term or a typed due date.
+   - Answered: an invoice or delivery note with a typed due date earlier than its issue date is refused with `due_date_before_issue`. That catches a mistyped year, such as 2025 for 2026, which would make the document overdue at once. Opening balances are exempt: the overdue one is often typed with the cutover date as its issue date and a past due date.
    - Should manual entry check `duplicate_suspected` once slice 7 adds it? The proposal is a warning in the form that asks whether to save anyway, not a new status.
 2. **A failed re-check on *Sin revisar*** (slice 6). If saving leaves a blocking issue, does the document go to `error`, or is the save rejected? The document may already have applications. In `error`, it drops out of the balance while the payments applied to it stay used up.
 3. **Changing money after the fact** (slice 3). Can a payment be edited or deleted once it's applied? Can an application be removed or changed, given the table has no `deleted_at` or `updated_at`? Does invariant 6 also protect a credit note that has already given credit? Slice 3 ships without these actions until this is answered.

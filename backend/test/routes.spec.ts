@@ -38,7 +38,7 @@ describe('every route', () => {
     await app.close();
   });
 
-  it('finds the auth routes, so a broken listing fails instead of passing on nothing', () => {
+  it('finds the auth and account routes, so a broken listing fails instead of passing on nothing', () => {
     const routes = registeredRoutes(app).map(
       ({ method, path }) => `${method} ${path}`,
     );
@@ -47,6 +47,12 @@ describe('every route', () => {
         'post /api/auth/login',
         'get /api/auth/me',
         'post /api/auth/logout',
+        'get /api/suppliers',
+        'post /api/suppliers',
+        'get /api/suppliers/:id',
+        'put /api/suppliers/:id',
+        'post /api/documents',
+        'delete /api/documents/:id',
       ]),
     );
   });

@@ -27,6 +27,31 @@ describe('Money', () => {
     expect(Money.fromString('1234.5').toString()).toBe('1234.50');
   });
 
+  it('accepts 12 integer digits and rejects 13', () => {
+    expect(Money.fromString('999999999999.99').toString()).toBe('999999999999.99');
+    expect(() => Money.fromString('1000000000000.00')).toThrow();
+    expect(() => Money.fromString('-1000000000000')).toThrow();
+  });
+
+  it.each([
+    ['0.00', false],
+    ['-0.01', false],
+    ['-5.00', false],
+    ['0.01', true],
+    ['86900.50', true],
+  ])('isPositive(%s) is %s', (value, expected) => {
+    expect(Money.fromString(value).isPositive()).toBe(expected);
+  });
+
+  it('compare orders -1.00, 0.00, 0.01, 10.00', () => {
+    const values = ['10.00', '0.01', '-1.00', '0.00'].map((v) => Money.fromString(v));
+    const sorted = [...values].sort((a, b) => a.compare(b));
+    expect(sorted.map((m) => m.toString())).toEqual(['-1.00', '0.00', '0.01', '10.00']);
+    expect(Money.fromString('1.50').compare(Money.fromString('1.5'))).toBe(0);
+    expect(Money.fromString('2.00').compare(Money.fromString('10.00'))).toBeLessThan(0);
+    expect(Money.fromString('10.00').compare(Money.fromString('2.00'))).toBeGreaterThan(0);
+  });
+
   it.each(['', ' 1.00', '1.00 ', '1,50', '1.234,56', '1e3', '+1.00', '1.005', 'abc', 'NaN', '1.'])(
     'rejects %j',
     (value) => {

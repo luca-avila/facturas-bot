@@ -1,7 +1,10 @@
 import { Decimal } from 'decimal.js';
 
-/** Up to 2 decimals, dot separator, optional leading minus. Nothing else. */
-const AMOUNT_PATTERN = /^-?\d+(\.\d{1,2})?$/;
+/**
+ * Up to 12 integer digits and 2 decimals, dot separator, optional leading
+ * minus. Nothing else: 12 digits is what `numeric(14,2)` holds.
+ */
+const AMOUNT_PATTERN = /^-?\d{1,12}(\.\d{1,2})?$/;
 
 /**
  * An exact amount of money. Never a float: it's backed by `decimal.js`, and
@@ -23,6 +26,16 @@ export class Money {
 
   add(other: Money): Money {
     return new Money(this.amount.plus(other.amount));
+  }
+
+  /** True only above zero. */
+  isPositive(): boolean {
+    return this.amount.greaterThan(0);
+  }
+
+  /** Negative when this is smaller than `other`, zero when equal, positive when larger. */
+  compare(other: Money): number {
+    return this.amount.comparedTo(other.amount);
   }
 
   /** Always exactly 2 decimals, like Postgres prints `numeric(14,2)`. */

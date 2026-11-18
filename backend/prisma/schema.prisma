@@ -29,5 +29,96 @@ model User {
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  documentsCreated  Document[] @relation("DocumentCreatedBy")
+  documentsReviewed Document[] @relation("DocumentReviewedBy")
+  auditEntries      AuditLog[]
+
   @@map("users")
+}
+
+enum DocumentType {
+  invoice
+  delivery_note
+  credit_note
+  opening_balance
+
+  @@map("document_type")
+}
+
+enum DocumentSource {
+  upload
+  manual
+
+  @@map("document_source")
+}
+
+enum ReviewStatus {
+  processing
+  error
+  unreviewed
+  reviewed
+
+  @@map("review_status")
+}
+
+enum DueDateSource {
+  supplier_term
+  manual
+
+  @@map("due_date_source")
+}
+
+model Supplier {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String
+  legalName       String?    @map("legal_name")
+  cuit            String?    @unique @db.Char(11)
+  paymentTermDays Int?       @map("payment_term_days")
+  notes           String?
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  documents       Document[]
+
+  @@map("suppliers")
+}
+
+model Document {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type             DocumentType?
+  source           DocumentSource
+  reviewStatus     ReviewStatus   @map("review_status")
+  supplierId       String?        @map("supplier_id") @db.Uuid
+  supplier         Supplier?      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  letter           String?
+  number           String?
+  numberNormalized String?        @map("number_normalized")
+  issueDate        DateTime?      @map("issue_date") @db.Date
+  dueDate          DateTime?      @map("due_date") @db.Date
+  dueDateSource    DueDateSource? @map("due_date_source")
+  total            Decimal?       @db.Decimal(14, 2)
+  notes            String?
+  createdById      String         @map("created_by") @db.Uuid
+  createdBy        User           @relation("DocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedAt       DateTime?      @map("reviewed_at") @db.Timestamptz(6)
+  reviewedById     String?        @map("reviewed_by") @db.Uuid
+  reviewedBy       User?          @relation("DocumentReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  deletedAt        DateTime?      @map("deleted_at") @db.Timestamptz(6)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("documents")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  entity    String
+  entityId  String   @map("entity_id") @db.Uuid
+  action    String
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("audit_log")
 }

@@ -1,16 +1,24 @@
 import { randomUUID } from 'node:crypto';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
-import type { Response } from 'supertest';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
+import request, { type Response } from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/configure-app.js';
 import { UsersService } from '../src/users/users.service.js';
 
-/** The real app, wired like `main.ts`. Each spec file builds its own, so in-memory state doesn't leak between files. */
-export async function createTestApp(): Promise<NestExpressApplication> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+/**
+ * The real app, wired like `main.ts`. Each spec file builds its own, so
+ * in-memory state doesn't leak between files. `override` can replace a
+ * provider, such as `AuditService` with one that fails.
+ */
+export async function createTestApp(
+  override: (builder: TestingModuleBuilder) => TestingModuleBuilder = (
+    builder,
+  ) => builder,
+): Promise<NestExpressApplication> {
+  const moduleRef = await override(
+    Test.createTestingModule({ imports: [AppModule] }),
+  ).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({
     bodyParser: false,
   });
@@ -47,17 +55,35 @@ export interface TestUser {
   password: string;
 }
 
+export interface CreatedTestUser extends TestUser {
+  id: string;
+}
+
 /** A new user with a unique email, so tests running in parallel never share one. */
 export async function createUser(
   app: NestExpressApplication,
   overrides: Partial<TestUser> = {},
-): Promise<TestUser> {
+): Promise<CreatedTestUser> {
   const user = {
     email: `ana-${randomUUID()}@example.com`,
     name: 'Ana',
     password: `pw-${randomUUID()}`,
     ...overrides,
   };
-  await app.get(UsersService).create({ ...user, role: 'staff' });
-  return user;
+  const { id } = await app.get(UsersService).create({ ...user, role: 'staff' });
+  return { ...user, id };
+}
+
+/** Signs the user in and returns the `session` cookie value. */
+export async function signIn(
+  app: NestExpressApplication,
+  user: TestUser,
+): Promise<string> {
+  const res = await request(app.getHttpServer())
+    .post('/api/auth/login')
+    .send({ email: user.email, password: user.password })
+    .expect(200);
+  const session = sessionCookie(res);
+  if (!session) throw new Error('Sign-in set no session cookie.');
+  return session;
 }
