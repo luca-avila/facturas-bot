@@ -387,7 +387,7 @@ A document that breaks invariant 7 gets 409 `{ errors: [{ field: 'number', code:
 - `backend/src/suppliers/` (`SuppliersModule`): `SuppliersController` (all four supplier routes) and `SuppliersService` (`create(input, user)`, `update(id, input, user)`). The two `GET`s call `BalancesService`.
 - `backend/src/balances/` (`BalancesModule`, exports `BalancesService`)
   - `listSuppliers({ q, sort }): Promise<SupplierList>`.
-  - `supplierAccount(id): Promise<SupplierAccount | null>`.
+  - `supplierAccount(id): Promise<SupplierAccount | null>`. Its two reads, the figures and the documents, run in one `RepeatableRead` transaction, so they always agree.
 - `AppModule` imports the four new modules. Controllers use `@CurrentUser()` for the acting user.
 
 **The balance SQL.** Verified on Postgres 16 with today as a parameter. Keep the derivation in one fragment that both queries compose with `Prisma.sql`:

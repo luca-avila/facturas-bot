@@ -122,20 +122,29 @@ export class BalancesService {
     };
   }
 
-  /** Null for an unknown id, or one that isn't a UUID. */
+  /**
+   * Null for an unknown id, or one that isn't a UUID. Both reads share one
+   * snapshot, so a write landing between them can't leave the four figures
+   * disagreeing with the list.
+   */
   async supplierAccount(id: string): Promise<SupplierAccount | null> {
     if (!isUuid(id)) return null;
     const date = today();
-    const [row] = await this.prisma.$queryRaw<SupplierSumsRow[]>(
-      this.supplierSums(date, Prisma.sql`WHERE s.id = ${id}::uuid`),
+    const [[row], documents] = await this.prisma.$transaction(
+      [
+        this.prisma.$queryRaw<SupplierSumsRow[]>(
+          this.supplierSums(date, Prisma.sql`WHERE s.id = ${id}::uuid`),
+        ),
+        this.prisma.$queryRaw<CountedRow[]>`
+          WITH counted AS (${this.counted(date)})
+          SELECT id, type, review_status, letter, number, issue_date, due_date, total, status, days_to_due
+          FROM counted
+          WHERE supplier_id = ${id}::uuid
+          ORDER BY due_date_value ASC NULLS LAST, issue_date_value, created_at, id`,
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
     if (!row) return null;
-    const documents = await this.prisma.$queryRaw<CountedRow[]>`
-      WITH counted AS (${this.counted(date)})
-      SELECT id, type, review_status, letter, number, issue_date, due_date, total, status, days_to_due
-      FROM counted
-      WHERE supplier_id = ${id}::uuid
-      ORDER BY due_date_value ASC NULLS LAST, issue_date_value, created_at, id`;
     return {
       id: row.id,
       name: row.name,
