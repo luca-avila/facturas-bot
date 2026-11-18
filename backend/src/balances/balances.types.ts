@@ -30,7 +30,9 @@ export interface SupplierList {
   totals: SupplierFigures;
 }
 
-export type DocumentStatus = 'pending' | 'overdue';
+export type DebtStatus = 'pending' | 'overdue' | 'paid';
+export type CreditStatus = 'available' | 'applied';
+export type DocumentStatus = DebtStatus | CreditStatus;
 
 export interface AccountDocument {
   id: string;
