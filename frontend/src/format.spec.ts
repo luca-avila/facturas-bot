@@ -4,6 +4,7 @@ import {
   formatCredit,
   formatCuit,
   formatDate,
+  formatAmountInput,
   formatDueIn,
   formatMoney,
   parseAmountInput,
@@ -25,6 +26,24 @@ describe('formatMoney', () => {
 
   it.each(['1.5', '1', '', '1,50', 'abc', '1.505', '+1.00'])('throws on %j', (amount) => {
     expect(() => formatMoney(amount)).toThrow()
+  })
+})
+
+describe('formatAmountInput', () => {
+  it.each([
+    ['86900.50', '86.900,50'],
+    ['0.00', '0,00'],
+    ['1000000.00', '1.000.000,00'],
+  ])('formats %s as %j', (amount, expected) => {
+    expect(formatAmountInput(amount)).toBe(expected)
+  })
+
+  it('reads back as the same amount', () => {
+    expect(parseAmountInput(formatAmountInput('86900.50'))).toBe('86900.50')
+  })
+
+  it.each(['1.5', '', '1,50', 'abc'])('throws on %j', (amount) => {
+    expect(() => formatAmountInput(amount)).toThrow()
   })
 })
 

@@ -20,6 +20,14 @@ export function formatMoney(amount: string): string {
   return sign === '-' ? `${MINUS}${NBSP}${formatted}` : formatted
 }
 
+/** "86900.50" → "86.900,50", "0.00" → "0,00", to prefill an amount input. Throws on anything else. */
+export function formatAmountInput(amount: string): string {
+  const match = CANONICAL_AMOUNT.exec(amount)
+  if (!match) throw new Error(`Not an amount: "${amount}"`)
+  const [, sign, integer, cents] = match
+  return `${sign}${groupThousands(integer)},${cents}`
+}
+
 /** A credit is shown subtracted: "30.00" → "− $ 30,00", and "0.00" → "$ 0,00". */
 export function formatCredit(amount: string): string {
   return amount === '0.00' ? formatMoney(amount) : `${MINUS}${NBSP}${formatMoney(amount)}`
