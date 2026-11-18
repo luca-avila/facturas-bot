@@ -424,6 +424,9 @@ describe('saving a payment', () => {
     it('lists newest paid first, and filters by supplier with unapplied, status and author', async () => {
       const supplier = await ledger.supplier();
       const invoice = await ledger.invoice(supplier, '50.00', '2026-11-20');
+      // Created before the one paid earlier, so creation order alone can't pass.
+      const newer = await ledger.pay(supplier, '30.00');
+      ledger.tick();
       const older = (
         await save(
           ledger.paymentBody(
@@ -436,7 +439,6 @@ describe('saving a payment', () => {
           ),
         ).expect(201)
       ).body as { id: string };
-      const newer = await ledger.pay(supplier, '30.00');
       const other = await ledger.pay(await ledger.supplier(), '10.00');
 
       const res = await ledger

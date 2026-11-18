@@ -712,10 +712,11 @@ describe('balances', () => {
 
     it('lists the account payments newest paid first, then newest created', async () => {
       const supplier = await newSupplier(`Panadería ${randomUUID()}`);
+      // Created in another order than paid, so creation alone can't pass.
+      const newest = await insertPayment(supplier, { paid_on: '2026-11-08' });
       const old = await insertPayment(supplier, { paid_on: '2026-10-01' });
       const first = await insertPayment(supplier, { paid_on: '2026-11-05' });
       const second = await insertPayment(supplier, { paid_on: '2026-11-05' });
-      const newest = await insertPayment(supplier, { paid_on: '2026-11-08' });
 
       const result = await account(supplier);
       expect(result.payments.map((p) => p.id)).toEqual([
