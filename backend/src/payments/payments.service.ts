@@ -3,10 +3,14 @@ import { ApplicationsService } from '../applications/applications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { toDbDate } from '../common/dates.js';
-import { invalidRequest } from '../common/field-errors.js';
+import { conflict, invalidRequest } from '../common/field-errors.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import type { PaymentFields, PaymentInput } from './payment-input.js';
+import type {
+  MarkPaidInput,
+  PaymentFields,
+  PaymentInput,
+} from './payment-input.js';
 
 /**
  * Writes payments, each with its `create` audit entry (D2). Every
@@ -34,6 +38,30 @@ export class PaymentsService {
         tx,
         { id, supplierId: supplier.id, amount: input.amount },
         input.applications,
+        user,
+      );
+      return { id };
+    });
+  }
+
+  /**
+   * *Marcar como pagado*: a payment of exactly what the document has left,
+   * applied to it, in one transaction. Refused if what's left changed.
+   */
+  markPaid(input: MarkPaidInput, user: SessionUser): Promise<{ id: string }> {
+    return this.prisma.$transaction(async (tx) => {
+      const { supplierId, remaining } = await this.applications.lockToSettle(
+        tx,
+        input.documentId,
+      );
+      if (input.amount.compare(remaining) !== 0) {
+        throw conflict([{ field: 'amount', code: 'remaining_changed' }]);
+      }
+      const id = await this.insert(tx, supplierId, input, null, user);
+      await this.applications.applyNewPayment(
+        tx,
+        { id, supplierId, amount: input.amount },
+        [{ documentId: input.documentId, amount: input.amount }],
         user,
       );
       return { id };

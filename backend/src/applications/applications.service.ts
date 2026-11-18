@@ -12,6 +12,7 @@ import { Money } from '../common/money.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type {
+  ApplyCreditInput,
   Split,
   SplitRequest,
   SplitRowInput,
@@ -107,6 +108,64 @@ export class ApplicationsService {
     );
     if (split.errors.length > 0) throw conflict(split.errors);
     await this.write(tx, { paymentId: payment.id }, toWrite, user);
+  }
+
+  /**
+   * Applies existing credit, from a payment's leftover or a credit note, in
+   * its own transaction. Locks the source, then the documents.
+   */
+  applyCredit(input: ApplyCreditInput, user: SessionUser): Promise<void> {
+    return this.prisma.$transaction(async (tx) => {
+      const { source } = input;
+      if (source.kind === 'payment') {
+        await tx.$queryRaw`SELECT id FROM payments WHERE id = ${source.id}::uuid FOR UPDATE`;
+      } else {
+        await tx.$queryRaw`SELECT id FROM documents WHERE id = ${source.id}::uuid FOR UPDATE`;
+      }
+      await this.lockDocuments(tx, input.applications);
+      const credit = await this.balances.creditSource(tx, source);
+      if (credit === null) {
+        throw conflict([{ field: 'source', code: 'not_applicable' }]);
+      }
+      const { split, toWrite } = await this.evaluate(
+        tx,
+        {
+          supplierId: credit.supplierId,
+          available: credit.unapplied,
+          existingCredit: true,
+        },
+        input.applications,
+      );
+      if (split.errors.length > 0) throw conflict(split.errors);
+      await this.write(
+        tx,
+        source.kind === 'payment'
+          ? { paymentId: source.id }
+          : { creditNoteId: source.id },
+        toWrite,
+        user,
+      );
+    });
+  }
+
+  /**
+   * For *Marcar como pagado*: locks the document and reads whose it is and
+   * what it has left. Refuses with 409 `not_applicable` on `documentId`
+   * unless it's a counted invoice, delivery note or opening balance.
+   */
+  async lockToSettle(
+    tx: Prisma.TransactionClient,
+    documentId: string,
+  ): Promise<{ supplierId: string; remaining: Money }> {
+    await this.lockDocuments(tx, [{ documentId, amount: ZERO }]);
+    const refused = conflict([{ field: 'documentId', code: 'not_applicable' }]);
+    const document = await this.balances.documentApplied(tx, documentId);
+    if (document?.supplierId == null) throw refused;
+    const [row] = (
+      await this.balances.splitDocuments(tx, document.supplierId, [documentId])
+    ).filter((doc) => doc.id === documentId);
+    if (row === undefined) throw refused;
+    return { supplierId: document.supplierId, remaining: row.remaining };
   }
 
   /** Locks the named documents in `id` order, so two writers can't wait on each other. */

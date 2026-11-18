@@ -165,4 +165,54 @@ describe('a failing audit write rolls back the change', () => {
     expect(await prisma.payment.count({ where: { supplierId } })).toBe(0);
     expect(await prisma.application.count({ where: { documentId } })).toBe(0);
   });
+
+  it('applying credit returns 500 and leaves no application', async () => {
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const documentId = await newInvoice(supplierId);
+    const { id: creditNoteId } = await prisma.document.create({
+      data: {
+        type: 'credit_note',
+        source: 'manual',
+        reviewStatus: 'reviewed',
+        supplierId,
+        issueDate: new Date('2026-10-09'),
+        total: '30.00',
+        createdById: userId,
+        reviewedById: userId,
+        reviewedAt: new Date('2026-11-09T12:00:00Z'),
+      },
+    });
+    await http()
+      .post('/api/applications')
+      .set('Cookie', `session=${session}`)
+      .send({
+        source: { kind: 'credit_note', id: creditNoteId },
+        applications: [{ documentId, amount: '30.00' }],
+      })
+      .expect(500);
+    expect(await prisma.application.count({ where: { documentId } })).toBe(0);
+  });
+
+  it('marking as paid returns 500 and leaves no payment and no application', async () => {
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const documentId = await newInvoice(supplierId);
+    await http()
+      .post('/api/payments/mark-paid')
+      .set('Cookie', `session=${session}`)
+      .send({
+        documentId,
+        amount: '100.00',
+        paidOn: '2026-11-09',
+        method: 'cash',
+        reference: null,
+        valueDate: null,
+      })
+      .expect(500);
+    expect(await prisma.payment.count({ where: { supplierId } })).toBe(0);
+    expect(await prisma.application.count({ where: { documentId } })).toBe(0);
+  });
 });
