@@ -228,6 +228,16 @@ describe('saving a payment', () => {
     },
   );
 
+  it('saves with a row of 0 for a document deleted since the preview', async () => {
+    const { supplier, a, b } = await aAndB();
+    await ledger.delete(`/api/documents/${b}`).expect(204);
+    await ledger.pay(supplier, '100.00', [
+      { documentId: a, amount: '100.00' },
+      { documentId: b, amount: '0' },
+    ]);
+    expect(await ledger.applicationsTo([a, b])).toEqual([[a, '100.00']]);
+  });
+
   describe('concurrency', () => {
     it.each([1, 2, 3, 4, 5])(
       'two payments of 60.00 at once on an invoice of 100.00: exactly one wins (run %i)',
