@@ -52,6 +52,23 @@ describe('Money', () => {
     expect(Money.fromString('10.00').compare(Money.fromString('2.00'))).toBeGreaterThan(0);
   });
 
+  it('subtracts exactly at 12 digits', () => {
+    const diff = (a: string, b: string) => Money.fromString(a).subtract(Money.fromString(b)).toString();
+    expect(diff('999999999999.99', '0.01')).toBe('999999999999.98');
+    expect(diff('0.30', '0.10')).toBe('0.20');
+    expect(diff('0.10', '999999999999.99')).toBe('-999999999999.89');
+    expect(diff('5.00', '5.00')).toBe('0.00');
+  });
+
+  it.each([
+    ['0.00', true],
+    ['-0.00', true],
+    ['0.01', false],
+    ['-0.01', false],
+  ])('isZero(%s) is %s', (value, expected) => {
+    expect(Money.fromString(value).isZero()).toBe(expected);
+  });
+
   it.each(['', ' 1.00', '1.00 ', '1,50', '1.234,56', '1e3', '+1.00', '1.005', 'abc', 'NaN', '1.'])(
     'rejects %j',
     (value) => {

@@ -13,7 +13,17 @@ export type FieldErrorCode =
   | 'due_date_required'
   | 'due_date_before_issue'
   | 'total_invalid'
-  | 'duplicate_number';
+  | 'duplicate_number'
+  | 'amount_invalid'
+  | 'paid_on_invalid'
+  | 'value_date_invalid'
+  | 'application_amount_invalid'
+  | 'exceeds_remaining'
+  | 'exceeds_source'
+  | 'nothing_to_apply'
+  | 'not_applicable'
+  | 'remaining_changed'
+  | 'document_has_applications';
 
 export interface FieldError {
   field: string;
