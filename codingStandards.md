@@ -67,5 +67,4 @@ These risks should be caught by tooling, not review. Until a check exists, the r
 | Risk | Check |
 | --- | --- |
 | Internal identifiers shown in the UI | Exhaustive `Record<DocumentType, string>` labels, so a missing Spanish label doesn't compile |
-| Writing `applications` outside its service | `no-restricted-imports` in ESLint |
 | Broken money invariants | Tests against a real Postgres, since locks and `CHECK` constraints can't be tested with mocks |
