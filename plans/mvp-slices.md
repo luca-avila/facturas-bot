@@ -96,7 +96,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - Now:
   - Invariants 2–6 live in one `ApplicationsService`. Its transaction locks the document and the payment or credit note in a fixed order. An ESLint import rule keeps any other code from writing `applications`.
   - Neither side of an application can be deleted or in `processing` or `error`.
-  - Editing or deleting a document enforces invariant 6.
+  - Deleting a document enforces invariant 6, and a trigger on `documents` and `payments` refuses any change that breaks it. Editing arrives in slice 6.
   - *Marcar como pagado* creates the payment and its application in one transaction.
   - A partly paid document shows *Pago parcial* with what's left. Credit notes show *Disponible* or *Aplicada*.
   - Payments and applications write `audit_log`.
@@ -110,7 +110,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 1. Invoice A for 100 is due first, and invoice B for 50 is due later. A transfer of 120 suggests 100 for A and 20 for B. After saving, A is *Pagado* and B shows *Pago parcial* with 30 left.
 2. Record a payment of 80 and apply none of it. The supplier's balance drops by 80, which stays as credit.
 3. In a new payment, applying 40 to B is rejected with a Spanish message.
-4. Deleting A, changing its supplier or lowering its total to 90 is rejected.
+4. Deleting A is rejected. Changing its supplier or lowering its total to 90 is rejected by the database, and slice 6 tries it from the screen.
 5. From the *Crédito a favor* card in *Proveedor*, apply a credit note of 30 to B. B is *Pagado* and the note is *Aplicada*.
 6. *Marcar como pagado* on a new invoice leaves it *Pagado*, with one payment and one application.
 7. An eCheq keeps its number and its value date.
@@ -263,6 +263,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 4. On a `supplier_unresolved` document, choose the supplier. The document leaves *Error*.
 5. On an `extraction_failed` document, *Reintentar* adds a second job row and keeps the first. Typing the data in leaves it *Revisado*.
 6. Discard an `unsupported_document`. It leaves the tray but stays in the database with `deleted_at` set.
+7. On a document with applications, changing the supplier or lowering the total below what's applied is rejected.
 
 **Tests.**
 - A table of allowed and forbidden status changes.
@@ -377,6 +378,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
    - Should manual entry check `duplicate_suspected` once slice 7 adds it? The proposal is a warning in the form that asks whether to save anyway, not a new status.
 2. **A failed re-check on *Sin revisar*** (slice 6). If saving leaves a blocking issue, does the document go to `error`, or is the save rejected? The document may already have applications. In `error`, it drops out of the balance while the payments applied to it stay used up.
 3. **Changing money after the fact** (slice 3). Can a payment be edited or deleted once it's applied? Can an application be removed or changed, given the table has no `deleted_at` or `updated_at`? Does invariant 6 also protect a credit note that has already given credit? Slice 3 ships without these actions until this is answered.
+   - Answered: invariant 6 protects both sides of an application. A credit note or a payment that has given credit can't be deleted or change supplier, and can't drop below what it gave. Editing and deleting payments and removing applications stay open.
 4. **Applying existing credit** (slice 3). Answered: from the *Crédito a favor* card in *Proveedor*, with the same split as *Pagos*.
 5. ***Total* when there's credit** (slice 2). Answered: *Total* is the balance after credit, and *Resumen* gets a *Crédito* column so the row adds up.
 6. **Edge cases of the same-image check** (slice 4, one-way). If a `sha256` belongs to a discarded document, does the upload still return that document? What happens when only some of the photos in an upload match?
@@ -391,7 +393,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 12. **Filters and search** (slices 2 and 3). Answered: search and sort in *Resumen* (slice 2), the payment-status filter in *Proveedor* and the supplier filter in *Pagos* (slice 3), and *Mías* or *Todas* in *Subidas* (slice 4). See [Screens](../system-design.md#screens).
 13. **Opening balances** (slices 2 and 3).
     - Answered: "up to two per supplier" is how they're meant to be used, not a rule. Nothing enforces it: a unique index can't tell the overdue one from the one that isn't, since only their due dates differ, and they're typed in once, at the start.
-    - Where do documents with no due date go in the oldest-due-first suggestion? This is for slice 3.
+    - Answered: documents with no due date take their issue date's place in the oldest-due-first suggestion, by `COALESCE(due_date, issue_date)`, and *Proveedor* lists them in the same order. Put last, an opening balance without a due date would never be suggested while newer invoices keep arriving, and since it never becomes overdue, nothing would flag it.
 14. **Suppliers created from a misread CUIT** (slice 5). A CUIT that's valid but wrong creates a supplier that can't be deleted or merged, and it stays in *Resumen*. Is that acceptable for the MVP?
 15. **Session length** (slice 1b). Answered: a session expires after 30 days without use, and each request renews it.
 16. **Where backups go** (slice 8). The storage outside the VPS isn't chosen yet, and sending backups there is data leaving the system. Where should they go?
