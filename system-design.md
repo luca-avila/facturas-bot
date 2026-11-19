@@ -322,7 +322,7 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 
 ### Duplicates
 
-1. **Same image.** At upload, a `sha256` that already exists returns the existing document and creates nothing. This also makes retries on a bad connection safe.
+1. **Same image.** At upload, photos are compared by `sha256` with the images of documents that aren't deleted. If every photo is already in one document, the upload returns it and creates nothing, which also makes retries on a bad connection safe. Any other match refuses the whole upload, so no image belongs to two documents. A photo whose document was deleted can be uploaded again.
 2. **Same number.** Same supplier, type, letter and `number_normalized`: `duplicate_number`.
 3. **Same purchase, no number.** Same supplier, `issue_date` and `total`, with at least one of the two documents lacking a number: `duplicate_suspected`. This also catches a delivery note and its invoice if both get uploaded with the same date and total. It misses an invoice dated later, or one that bills several delivery notes.
 
