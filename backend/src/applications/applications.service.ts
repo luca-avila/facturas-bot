@@ -58,13 +58,15 @@ interface Evaluated {
  * Every write locks in one fixed order. An existing payment source comes
  * first. Then every document the write names, a credit-note source among
  * them, is locked in one `ORDER BY id FOR UPDATE`, whatever its type.
- * Payments are never locked after documents, so no two writers can wait on
- * each other in a cycle, whatever a request names. The lock doesn't filter on
- * type on purpose: a filtered lock skips, without waiting, a row whose type
- * another transaction is changing. Then a new statement reads what's left
- * through `BalancesService`. Write transactions never pass `isolationLevel`: under
- * `REPEATABLE READ`, the sum read after a lock misses a concurrent
- * application, which would over-apply.
+ * Existing payments are never locked after documents, so no two writers can
+ * wait on each other in a cycle, whatever a request names. A payment the
+ * transaction inserts after its document locks doesn't count: no other
+ * transaction can see it until commit, so none can wait on it. The lock
+ * doesn't filter on type on purpose: a filtered lock skips, without waiting,
+ * a row whose type another transaction is changing. Then a new statement
+ * reads what's left through `BalancesService`. Write transactions never pass
+ * `isolationLevel`: under `REPEATABLE READ`, the sum read after a lock misses
+ * a concurrent application, which would over-apply.
  */
 @Injectable()
 export class ApplicationsService {
