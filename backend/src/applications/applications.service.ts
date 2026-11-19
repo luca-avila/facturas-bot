@@ -55,10 +55,14 @@ interface Evaluated {
 /**
  * The only writer of `applications` (invariants 2–6, enforced by ESLint).
  *
- * Every write locks in one fixed order: the source first (an existing
- * payment or credit note), then the receiving documents in one `ORDER BY id
- * FOR UPDATE`. Then a new statement reads what's left through
- * `BalancesService`. Write transactions never pass `isolationLevel`: under
+ * Every write locks in one fixed order. An existing payment source comes
+ * first. Then every document the write names, a credit-note source among
+ * them, is locked in one `ORDER BY id FOR UPDATE`, whatever its type.
+ * Payments are never locked after documents, so no two writers can wait on
+ * each other in a cycle, whatever a request names. The lock doesn't filter on
+ * type on purpose: a filtered lock skips, without waiting, a row whose type
+ * another transaction is changing. Then a new statement reads what's left
+ * through `BalancesService`. Write transactions never pass `isolationLevel`: under
  * `REPEATABLE READ`, the sum read after a lock misses a concurrent
  * application, which would over-apply.
  */
@@ -112,7 +116,10 @@ export class ApplicationsService {
     rows: SplitRowInput[],
     user: SessionUser,
   ): Promise<void> {
-    await this.lockDocuments(tx, rows);
+    await this.lockDocuments(
+      tx,
+      rows.map((row) => row.documentId),
+    );
     const { split, toWrite } = await this.evaluate(
       tx,
       {
@@ -128,17 +135,19 @@ export class ApplicationsService {
 
   /**
    * Applies existing credit, from a payment's leftover or a credit note, in
-   * its own transaction. Locks the source, then the documents.
+   * its own transaction. Locks a payment source first, then the documents. A
+   * credit-note source is locked with the documents, in id order.
    */
   applyCredit(input: ApplyCreditInput, user: SessionUser): Promise<void> {
     return this.prisma.$transaction(async (tx) => {
       const { source } = input;
+      const rowIds = input.applications.map((row) => row.documentId);
       if (source.kind === 'payment') {
         await tx.$queryRaw`SELECT id FROM payments WHERE id = ${source.id}::uuid FOR UPDATE`;
+        await this.lockDocuments(tx, rowIds);
       } else {
-        await tx.$queryRaw`SELECT id FROM documents WHERE id = ${source.id}::uuid FOR UPDATE`;
+        await this.lockDocuments(tx, [source.id, ...rowIds]);
       }
-      await this.lockDocuments(tx, input.applications);
       const credit = await this.balances.creditSource(tx, source);
       if (credit === null) {
         throw conflict([{ field: 'source', code: 'not_applicable' }]);
@@ -173,7 +182,7 @@ export class ApplicationsService {
     tx: Prisma.TransactionClient,
     documentId: string,
   ): Promise<{ supplierId: string; remaining: Money }> {
-    await this.lockDocuments(tx, [{ documentId, amount: ZERO }]);
+    await this.lockDocuments(tx, [documentId]);
     const refused = conflict([{ field: 'documentId', code: 'not_applicable' }]);
     const document = await this.balances.documentApplied(tx, documentId);
     if (document?.supplierId == null) throw refused;
@@ -215,12 +224,11 @@ export class ApplicationsService {
     }
   }
 
-  /** Locks the named documents in `id` order, so two writers can't wait on each other. */
+  /** Locks these documents in `id` order, in one statement, whatever their type. */
   private async lockDocuments(
     tx: Prisma.TransactionClient,
-    rows: SplitRowInput[],
+    ids: string[],
   ): Promise<void> {
-    const ids = rows.map((row) => row.documentId);
     await tx.$queryRaw`
       SELECT id FROM documents WHERE id = ANY(${ids}::uuid[]) ORDER BY id FOR UPDATE`;
   }

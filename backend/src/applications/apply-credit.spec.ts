@@ -285,4 +285,137 @@ describe('applying existing credit', () => {
       },
     );
   });
+
+  describe('lock order', () => {
+    /**
+     * Holds a document's row lock from a third connection until `release()`.
+     * Resolves once the lock is held, and rejects if the transaction fails.
+     */
+    async function holdLock(
+      documentId: string,
+    ): Promise<{ pid: number; release: () => Promise<void> }> {
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let locked!: (pid: number) => void;
+      const lockedPid = new Promise<number>((resolve) => {
+        locked = resolve;
+      });
+      const transaction = ledger.prisma.$transaction(
+        async (tx) => {
+          const [{ pid }] = await tx.$queryRaw<
+            { pid: number }[]
+          >`SELECT pg_backend_pid() AS pid`;
+          await tx.$queryRaw`SELECT id FROM documents WHERE id = ${documentId}::uuid FOR UPDATE`;
+          locked(pid);
+          await released;
+        },
+        { timeout: 10_000 },
+      );
+      const pid = await Promise.race([
+        lockedPid,
+        transaction.then(() => {
+          throw new Error('The holder ended before taking its lock.');
+        }),
+      ]);
+      return {
+        pid,
+        release: async () => {
+          release();
+          await transaction;
+        },
+      };
+    }
+
+    /** Polls until at least `count` backends wait on one of `pids`, and returns them. */
+    async function waitersOn(pids: number[], count: number): Promise<number[]> {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        const rows = await ledger.prisma.$queryRaw<{ pid: number }[]>`
+          SELECT pid FROM pg_stat_activity WHERE pg_blocking_pids(pid) && ${pids}::int[]`;
+        if (rows.length >= count) return rows.map((row) => row.pid);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error(
+        `Fewer than ${count} backends waited on ${pids.join(', ')}.`,
+      );
+    }
+
+    /** Two new document ids, the lower first. */
+    const twoIds = () => [randomUUID(), randomUUID()].sort();
+
+    it('a credit note named as a row while it is being applied gets not_applicable, not a deadlock', async () => {
+      const supplier = await ledger.supplier();
+      const [f, nc] = twoIds();
+      await ledger.insertDocument(supplier, { id: f, total: '50.00' });
+      await ledger.insertDocument(supplier, {
+        id: nc,
+        type: 'credit_note',
+        total: '30.00',
+        due_date: null,
+        due_date_source: null,
+      });
+      const holder = await holdLock(nc);
+
+      const first = apply({ kind: 'credit_note', id: nc }, [
+        { documentId: f, amount: '30.00' },
+      ]).then((res) => res);
+      const [firstPid] = await waitersOn([holder.pid], 1);
+      const second = ledger
+        .post(
+          '/api/payments',
+          ledger.paymentBody(supplier, '20.00', [
+            { documentId: nc, amount: '10.00' },
+            { documentId: f, amount: '10.00' },
+          ]),
+        )
+        .then((res) => res);
+      await waitersOn([holder.pid, firstPid], 2);
+      await holder.release();
+
+      const [applied, paid] = await Promise.all([first, second]);
+      expect(applied.status).toBe(204);
+      expect(paid.status).toBe(409);
+      expect(paid.body).toEqual({
+        errors: [{ field: `applications.${nc}`, code: 'not_applicable' }],
+      });
+      expect(await ledger.applicationsTo([f])).toEqual([[f, '30.00']]);
+      expect((await ledger.writes(supplier)).payments).toBe(0);
+    });
+
+    it('an invoice sent as a credit-note source gets not_applicable, not a deadlock', async () => {
+      const supplier = await ledger.supplier();
+      const [g, f] = twoIds();
+      await ledger.insertDocument(supplier, { id: g, total: '50.00' });
+      await ledger.insertDocument(supplier, { id: f, total: '50.00' });
+      const holder = await holdLock(f);
+
+      const first = apply({ kind: 'credit_note', id: f }, [
+        { documentId: g, amount: '10.00' },
+      ]).then((res) => res);
+      const [firstPid] = await waitersOn([holder.pid], 1);
+      const second = ledger
+        .post(
+          '/api/payments',
+          ledger.paymentBody(supplier, '20.00', [
+            { documentId: f, amount: '10.00' },
+            { documentId: g, amount: '10.00' },
+          ]),
+        )
+        .then((res) => res);
+      await waitersOn([holder.pid, firstPid], 2);
+      await holder.release();
+
+      const [applied, paid] = await Promise.all([first, second]);
+      expect(applied.status).toBe(409);
+      expect(applied.body).toEqual({
+        errors: [{ field: 'source', code: 'not_applicable' }],
+      });
+      expect(paid.status).toBe(201);
+      expect(await ledger.applicationsTo([g, f])).toEqual([
+        [g, '10.00'],
+        [f, '10.00'],
+      ]);
+    });
+  });
 });
