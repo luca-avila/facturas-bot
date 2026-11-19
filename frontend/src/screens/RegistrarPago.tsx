@@ -52,9 +52,8 @@ function RegistrarPago() {
       if (result.ok) {
         const today = result.value.today
         setDetails((d) => {
-          const supplierId = d.supplierId === '' ? (result.value.suppliers[0]?.id ?? '') : d.supplierId
           const fields = d.fields.paidOn === '' ? { ...d.fields, paidOn: today } : d.fields
-          return { ...d, supplierId, fields }
+          return { ...d, fields }
         })
       }
     })
@@ -125,7 +124,9 @@ function RegistrarPago() {
             onChange={(e) => setDetails((d) => ({ ...d, supplierId: e.target.value }))}
           >
             {supplier === undefined && (
-              <option value={details.supplierId}>{suppliers === null ? 'Cargando…' : ''}</option>
+              <option value={details.supplierId}>
+                {suppliers === null ? 'Cargando…' : details.supplierId === '' ? 'Elegí un proveedor' : ''}
+              </option>
             )}
             {suppliers?.ok &&
               suppliers.value.suppliers.map((s) => (
