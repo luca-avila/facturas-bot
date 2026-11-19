@@ -24,6 +24,7 @@ const MAIN = 'src/main.ts';
 const MONEY = 'src/common/money.ts';
 const CLOCK = 'src/common/clock.ts';
 const SPEC = 'src/common/clock.spec.ts';
+const APPLICATIONS = 'src/applications/applications.service.ts';
 
 const floatCode = {
   parseFloat: "export const x = parseFloat('1.5');\n",
@@ -35,6 +36,49 @@ const clockCode = {
   'new Date()': 'export const d = new Date();\n',
   'Date()': 'export const d = Date();\n',
   'Date.now()': 'export const d = Date.now();\n',
+};
+
+const applicationWrites = {
+  'tx.application.create(…)': 'export const f = () => tx.application.create({ data: {} });\n',
+  "tx['application']": "export const f = () => tx['application'];\n",
+  'a nested applicationsReceived write':
+    'export const f = () => tx.document.update({ where: {}, data: { applicationsReceived: { create: [] } } });\n',
+  'raw INSERT INTO applications':
+    'export const f = () => tx.$executeRaw`INSERT INTO applications (amount) VALUES (${1})`;\n',
+  'raw insert into "applications"':
+    "export const f = () => tx.$executeRawUnsafe('insert into \"applications\" (amount) values (1)');\n",
+  'raw UPDATE applications': 'export const f = () => tx.$executeRaw`UPDATE applications SET amount = 1`;\n',
+  'raw DELETE FROM applications':
+    "export const f = () => tx.$executeRawUnsafe('DELETE FROM applications');\n",
+  'a destructured { application }':
+    'export const f = () => {\n  const { application } = tx;\n  return application.create({ data: {} });\n};\n',
+  'a destructured { application: apps }':
+    'export const f = () => {\n  const { application: apps } = tx;\n  return apps.create({ data: {} });\n};\n',
+  "a destructured { 'application': apps }":
+    "export const f = () => {\n  const { 'application': apps } = tx;\n  return apps.create({ data: {} });\n};\n",
+  'a { application } parameter':
+    'export const f = () => prisma.$transaction(({ application }) => application.create({ data: {} }));\n',
+  'raw INSERT INTO public.applications':
+    'export const f = () => tx.$executeRaw`INSERT INTO public.applications (amount) VALUES (${1})`;\n',
+  'raw insert into "public"."applications"':
+    "export const f = () => tx.$executeRawUnsafe('insert into \"public\".\"applications\" (amount) values (1)');\n",
+  'raw UPDATE public.applications':
+    'export const f = () => tx.$executeRaw`UPDATE public.applications SET amount = 1`;\n',
+  'raw DELETE FROM "public".applications':
+    "export const f = () => tx.$executeRawUnsafe('DELETE FROM \"public\".applications');\n",
+};
+
+const applicationReads = {
+  'SELECT … FROM applications':
+    'export const f = () => tx.$queryRaw`SELECT SUM(amount) FROM applications WHERE document_id = ${1}`;\n',
+  '{ applications: rows }': 'export const f = (rows: unknown[]) => ({ applications: rows });\n',
+  'SELECT … FROM public.applications':
+    'export const f = () => tx.$queryRaw`SELECT SUM(amount) FROM public.applications WHERE document_id = ${1}`;\n',
+  'SELECT … FROM "public"."applications"':
+    "export const f = () => tx.$queryRawUnsafe('SELECT amount FROM \"public\".\"applications\"');\n",
+  '{ application: rows }': 'export const f = (rows: unknown[]) => ({ application: rows });\n',
+  'SELECT … FOR UPDATE OF applications':
+    'export const f = () => tx.$queryRaw`SELECT id FROM applications WHERE document_id = ${1} FOR UPDATE OF applications`;\n',
 };
 
 describe('backend lint bans', () => {
@@ -67,6 +111,32 @@ describe('backend lint bans', () => {
       const code = "export const d = new Date('2026-11-09');\n";
       expect(await banErrors(MAIN, code)).toEqual([]);
       expect(await banErrors(SPEC, code)).toEqual([]);
+    });
+  });
+
+  describe('applications', () => {
+    it.each(Object.entries(applicationWrites))('%s is an error outside src/applications/', async (_, code) => {
+      expect(await banErrors(MAIN, code)).toEqual(['no-restricted-syntax']);
+    });
+
+    it.each(Object.entries(applicationReads))('%s is allowed anywhere', async (_, code) => {
+      expect(await banErrors(MAIN, code)).toEqual([]);
+    });
+
+    it('allows tx.application.create(…) in src/applications/ and in spec files', async () => {
+      expect(await banErrors(APPLICATIONS, applicationWrites['tx.application.create(…)'])).toEqual([]);
+      expect(await banErrors(SPEC, applicationWrites['tx.application.create(…)'])).toEqual([]);
+      expect(await banErrors(APPLICATIONS, applicationWrites['a destructured { application }'])).toEqual([]);
+      expect(await banErrors(SPEC, applicationWrites['a destructured { application }'])).toEqual([]);
+    });
+
+    it('does not exempt clock.ts', async () => {
+      expect(await banErrors(CLOCK, applicationWrites['tx.application.create(…)'])).not.toEqual([]);
+    });
+
+    it('keeps the clock ban in src/applications/, and the clock exception in clock.ts', async () => {
+      expect(await banErrors(APPLICATIONS, clockCode['new Date()'])).not.toEqual([]);
+      expect(await banErrors(CLOCK, clockCode['new Date()'])).toEqual([]);
     });
   });
 

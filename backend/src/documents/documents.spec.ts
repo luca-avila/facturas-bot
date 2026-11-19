@@ -554,6 +554,80 @@ describe('documents', () => {
       await remove(id).expect(404);
     });
 
+    describe('invariant 6', () => {
+      async function pay(
+        supplierId: string,
+        amount: string,
+        documentId: string,
+      ): Promise<void> {
+        await withSession(http().post('/api/payments'))
+          .send({
+            supplierId,
+            amount,
+            paidOn: '2026-11-09',
+            method: 'transfer',
+            reference: null,
+            valueDate: null,
+            notes: null,
+            applications: [{ documentId, amount }],
+          })
+          .expect(201);
+      }
+
+      const deletes = (id: string) =>
+        prisma.auditLog.count({ where: { entityId: id, action: 'delete' } });
+
+      it('acceptance 4: refuses to delete A once it has a payment, and A still counts', async () => {
+        const supplier = await newSupplier(30);
+        const a = await enter(invoice(supplier, { total: '100.00' }));
+        await pay(supplier, '40.00', a);
+
+        const res = await remove(a).expect(409);
+        expect(res.body).toEqual({
+          errors: [{ field: 'document', code: 'document_has_applications' }],
+        });
+        expect((await stored(a)).deletedAt).toBeNull();
+        expect(
+          (await account(supplier)).documents.find((d) => d.id === a),
+        ).toMatchObject({ remaining: '60.00' });
+        expect(await deletes(a)).toBe(0);
+      });
+
+      it('refuses to delete a credit note that gave credit', async () => {
+        const supplier = await newSupplier(30);
+        const target = await enter(invoice(supplier, { total: '100.00' }));
+        const note = await enter(
+          invoice(supplier, {
+            type: 'credit_note',
+            number: '0001-00000042',
+            total: '30.00',
+          }),
+        );
+        await withSession(http().post('/api/applications'))
+          .send({
+            source: { kind: 'credit_note', id: note },
+            applications: [{ documentId: target, amount: '10.00' }],
+          })
+          .expect(204);
+
+        const res = await remove(note).expect(409);
+        expect(res.body).toEqual({
+          errors: [{ field: 'document', code: 'document_has_applications' }],
+        });
+        expect(await deletes(note)).toBe(0);
+      });
+
+      it('still deletes a document of the same supplier without applications', async () => {
+        const supplier = await newSupplier(30);
+        const paid = await enter(invoice(supplier, { total: '100.00' }));
+        await pay(supplier, '100.00', paid);
+        const other = await enter(
+          invoice(supplier, { number: '0001-00004522' }),
+        );
+        await remove(other).expect(204);
+      });
+    });
+
     it('leaves one audit entry per step, in order, each by Ana', async () => {
       const supplier = await newSupplier(30);
       const first = await enter(invoice(supplier));

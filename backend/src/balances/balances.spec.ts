@@ -94,6 +94,42 @@ describe('balances', () => {
     return inserted.id;
   }
 
+  /** A transfer by Ana, changed by `overrides`. */
+  async function insertPayment(
+    supplierId: string,
+    overrides: Row = {},
+  ): Promise<string> {
+    const row: Row = {
+      supplier_id: supplierId,
+      amount: '80.00',
+      paid_on: '2026-11-05',
+      method: 'transfer',
+      created_by: ana.id,
+      ...overrides,
+    };
+    const columns = Object.keys(row);
+    const sql = `INSERT INTO payments (${columns.map((c) => `"${c}"`).join(', ')})
+      VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`;
+    const [inserted] = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      sql,
+      ...columns.map((c) => row[c]),
+    );
+    return inserted.id;
+  }
+
+  /** Written directly, which only spec files may do. */
+  async function apply(
+    documentId: string,
+    source: { paymentId: string } | { creditNoteId: string },
+    amount: string,
+  ): Promise<void> {
+    const paymentId = 'paymentId' in source ? source.paymentId : null;
+    const creditNoteId = 'creditNoteId' in source ? source.creditNoteId : null;
+    await prisma.$executeRaw`
+      INSERT INTO applications (document_id, payment_id, credit_note_id, amount)
+      VALUES (${documentId}::uuid, ${paymentId}::uuid, ${creditNoteId}::uuid, ${amount}::numeric)`;
+  }
+
   const unreviewed = {
     review_status: 'unreviewed',
     reviewed_by: null,
@@ -172,7 +208,11 @@ describe('balances', () => {
 
     it('returns no rows and zero totals when nothing matches', async () => {
       const result = await list(`q=${randomUUID()}`);
-      expect(result).toEqual({ suppliers: [], totals: ZERO });
+      expect(result).toEqual({
+        suppliers: [],
+        totals: ZERO,
+        today: '2026-11-10',
+      });
     });
 
     it('returns every supplier for a blank search', async () => {
@@ -350,7 +390,7 @@ describe('balances', () => {
       );
     });
 
-    it('subtracts a credit note, which has no status', async () => {
+    it('subtracts a credit note, which is available', async () => {
       const supplier = await newSupplier(`Panadería ${randomUUID()}`);
       await insertDocument(supplier, { total: '100.00' });
       const credit = await insertDocument(supplier, {
@@ -367,7 +407,9 @@ describe('balances', () => {
       });
       expect(result.documents.find((d) => d.id === credit)).toMatchObject({
         type: 'credit_note',
-        status: null,
+        status: 'available',
+        remaining: '30.00',
+        partial: false,
         dueDate: null,
         daysToDue: null,
         total: '30.00',
@@ -413,19 +455,37 @@ describe('balances', () => {
       });
     });
 
-    it('lists documents by due date, with those without one last', async () => {
+    it('lists documents by due date, or issue date without one, then issue date, then creation', async () => {
       const supplier = await newSupplier(`Panadería ${randomUUID()}`);
-      const credit = await insertDocument(supplier, creditNote);
       const late = await insertDocument(supplier, { due_date: '2026-12-20' });
-      const early = await insertDocument(supplier, { due_date: '2026-11-01' });
+      // Issued 2026-10-01: a credit note sorts by its issue date.
+      const credit = await insertDocument(supplier, creditNote);
       const middle = await insertDocument(supplier, { due_date: '2026-11-15' });
+      const undated = await insertDocument(supplier, {
+        ...openingBalance,
+        issue_date: '2026-09-30',
+        due_date: null,
+        due_date_source: null,
+      });
+      const sameDueLaterIssue = await insertDocument(supplier, {
+        issue_date: '2026-10-20',
+        due_date: '2026-11-15',
+      });
+      const createdAfterIt = await insertDocument(supplier, {
+        issue_date: '2026-10-20',
+        due_date: '2026-11-15',
+      });
+      const early = await insertDocument(supplier, { due_date: '2026-09-29' });
 
       const result = await account(supplier);
       expect(result.documents.map((d) => d.id)).toEqual([
         early,
-        middle,
-        late,
+        undated,
         credit,
+        middle,
+        sameDueLaterIssue,
+        createdAfterIt,
+        late,
       ]);
     });
 
@@ -460,6 +520,7 @@ describe('balances', () => {
         overdue: '86900.50',
         credit: '0.00',
         balance: '86900.50',
+        today: '2026-11-10',
         documents: [
           {
             id: doc,
@@ -471,10 +532,21 @@ describe('balances', () => {
             total: '86900.50',
             reviewStatus: 'reviewed',
             status: 'overdue',
+            remaining: '86900.50',
+            partial: false,
             daysToDue: -2,
           },
         ],
+        payments: [],
       });
+    });
+
+    it('gives the Buenos Aires date as today, in the list and the account', async () => {
+      const token = randomUUID();
+      const supplier = await newSupplier(`Panadería ${token}`);
+      await at('2026-11-10T02:59:59Z');
+      expect((await list(`q=${token}`)).today).toBe('2026-11-09');
+      expect((await account(supplier)).today).toBe('2026-11-09');
     });
 
     it.each([
@@ -482,6 +554,177 @@ describe('balances', () => {
       ['a non-UUID id', 'not-a-uuid'],
     ])('returns 404 for %s', async (_, id) => {
       await get(`/api/suppliers/${id}`).expect(404);
+    });
+  });
+
+  describe('payments and applications', () => {
+    it('shows a partly paid invoice as pending, partial, with what is left in Sin vencer', async () => {
+      const supplier = await newSupplier(`Panadería ${randomUUID()}`);
+      const doc = await insertDocument(supplier, { total: '100.00' });
+      await apply(
+        doc,
+        { paymentId: await insertPayment(supplier, { amount: '40.00' }) },
+        '40.00',
+      );
+
+      const result = await account(supplier);
+      expect(result.documents.find((d) => d.id === doc)).toMatchObject({
+        status: 'pending',
+        remaining: '60.00',
+        partial: true,
+      });
+      expect(figures(result)).toEqual({
+        notDue: '60.00',
+        overdue: '0.00',
+        credit: '0.00',
+        balance: '60.00',
+      });
+    });
+
+    it('shows a fully applied invoice due yesterday as paid, adding nothing to Vencido', async () => {
+      const supplier = await newSupplier(`Panadería ${randomUUID()}`);
+      const doc = await insertDocument(supplier, {
+        total: '100.00',
+        due_date: '2026-11-09',
+      });
+      await apply(
+        doc,
+        { paymentId: await insertPayment(supplier, { amount: '100.00' }) },
+        '100.00',
+      );
+
+      const result = await account(supplier);
+      expect(result.documents.find((d) => d.id === doc)).toMatchObject({
+        status: 'paid',
+        remaining: '0.00',
+        partial: false,
+        daysToDue: -1,
+      });
+      expect(figures(result)).toEqual(ZERO);
+      expect(result.payments.map((p) => p.status)).toEqual(['applied']);
+    });
+
+    it('adds an unapplied payment and a partly applied credit note to Crédito, and the rows still add up', async () => {
+      const token = randomUUID();
+      const supplier = await newSupplier(`Panadería ${token}`);
+      const other = await newSupplier(`Lácteos ${token}`);
+      await insertDocument(other, { total: '10.00', due_date: '2026-01-01' });
+      const invoice = await insertDocument(supplier, { total: '100.00' });
+      const credit = await insertDocument(supplier, {
+        ...creditNote,
+        total: '50.00',
+      });
+      await apply(invoice, { creditNoteId: credit }, '20.00');
+      const payment = await insertPayment(supplier, { amount: '80.00' });
+
+      const result = await account(supplier);
+      expect(result.documents.find((d) => d.id === credit)).toMatchObject({
+        status: 'available',
+        remaining: '30.00',
+        partial: true,
+      });
+      expect(result.payments).toEqual([
+        {
+          id: payment,
+          amount: '80.00',
+          paidOn: '2026-11-05',
+          valueDate: null,
+          method: 'transfer',
+          reference: null,
+          createdByName: 'Ana',
+          unapplied: '80.00',
+          status: 'available',
+        },
+      ]);
+      // Sin vencer 80.00 + Vencido 0.00 − Crédito 110.00.
+      expect(figures(result)).toEqual({
+        notDue: '80.00',
+        overdue: '0.00',
+        credit: '110.00',
+        balance: '-30.00',
+      });
+
+      const both = await list(`q=${token}`);
+      expect(both.suppliers.find((s) => s.id === supplier)).toMatchObject(
+        figures(result),
+      );
+      expect(both.totals).toEqual({
+        notDue: '80.00',
+        overdue: '10.00',
+        credit: '110.00',
+        balance: '-20.00',
+      });
+    });
+
+    it('derives the planned example: an opening balance, two invoices, a credit note and a payment', async () => {
+      const supplier = await newSupplier(`Panadería ${randomUUID()}`);
+      const opening = await insertDocument(supplier, {
+        ...openingBalance,
+        issue_date: '2026-09-30',
+        due_date: null,
+        due_date_source: null,
+        total: '40.00',
+      });
+      const a = await insertDocument(supplier, {
+        total: '100.00',
+        due_date: '2026-11-15',
+      });
+      const b = await insertDocument(supplier, {
+        total: '50.00',
+        due_date: '2026-11-20',
+      });
+      await insertDocument(supplier, { ...creditNote, total: '30.00' });
+      await apply(
+        a,
+        { paymentId: await insertPayment(supplier, { amount: '100.00' }) },
+        '100.00',
+      );
+      await apply(
+        b,
+        { paymentId: await insertPayment(supplier, { amount: '20.00' }) },
+        '20.00',
+      );
+      await insertPayment(supplier, { amount: '80.00' });
+
+      const result = await account(supplier);
+      expect(figures(result)).toEqual({
+        notDue: '70.00',
+        overdue: '0.00',
+        credit: '110.00',
+        balance: '-40.00',
+      });
+      expect(result.documents[0].id).toBe(opening);
+      expect(result.documents.find((d) => d.id === b)).toMatchObject({
+        status: 'pending',
+        partial: true,
+        remaining: '30.00',
+      });
+    });
+
+    it('counts a deleted payment nowhere, and does not list it', async () => {
+      const supplier = await newSupplier(`Panadería ${randomUUID()}`);
+      await insertPayment(supplier, { deleted_at: '2026-11-06T12:00:00Z' });
+
+      const result = await account(supplier);
+      expect(figures(result)).toEqual(ZERO);
+      expect(result.payments).toEqual([]);
+    });
+
+    it('lists the account payments newest paid first, then newest created', async () => {
+      const supplier = await newSupplier(`Panadería ${randomUUID()}`);
+      // Created in another order than paid, so creation alone can't pass.
+      const newest = await insertPayment(supplier, { paid_on: '2026-11-08' });
+      const old = await insertPayment(supplier, { paid_on: '2026-10-01' });
+      const first = await insertPayment(supplier, { paid_on: '2026-11-05' });
+      const second = await insertPayment(supplier, { paid_on: '2026-11-05' });
+
+      const result = await account(supplier);
+      expect(result.payments.map((p) => p.id)).toEqual([
+        newest,
+        second,
+        first,
+        old,
+      ]);
     });
   });
 });

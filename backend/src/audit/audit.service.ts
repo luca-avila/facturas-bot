@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../generated/prisma/client.js';
 
-export type AuditEntity = 'suppliers' | 'documents';
+export type AuditEntity =
+  'suppliers' | 'documents' | 'payments' | 'applications';
 export type AuditAction = 'create' | 'update' | 'delete';
 
 /**
@@ -25,6 +26,8 @@ export interface AuditEntry {
 const TABLES: Record<AuditEntity, Prisma.Sql> = {
   suppliers: Prisma.sql`suppliers`,
   documents: Prisma.sql`documents`,
+  payments: Prisma.sql`payments`,
+  applications: Prisma.sql`applications`,
 };
 
 /**

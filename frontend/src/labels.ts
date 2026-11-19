@@ -7,9 +7,11 @@ import type {
   DocumentType,
   DueDateSource,
   FieldErrorCode,
+  PaymentMethod,
   ReviewStatus,
   SupplierSort,
 } from './accounts-api'
+import type { PaymentFilter } from './payment-filter'
 
 export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
   invoice: 'Factura',
@@ -38,6 +40,27 @@ export const DUE_DATE_SOURCE_LABELS: Record<DueDateSource, string> = {
 export const DOCUMENT_STATUS_LABELS: Record<DocumentStatus, string> = {
   pending: 'Sin vencer',
   overdue: 'Vencido',
+  paid: 'Pagado',
+  available: 'Disponible',
+  applied: 'Aplicada',
+}
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  transfer: 'Transferencia',
+  echeq: 'eCheq',
+  cash: 'Efectivo',
+  mercado_pago: 'Mercado Pago',
+  other: 'Otro',
+}
+
+/** The chip order, Transferencia first. */
+export const PAYMENT_METHODS: readonly PaymentMethod[] = ['transfer', 'echeq', 'cash', 'mercado_pago', 'other']
+
+export const PAYMENT_FILTER_LABELS: Record<PaymentFilter, string> = {
+  with_balance: 'Con saldo',
+  overdue: 'Vencido',
+  pending: 'Sin vencer',
+  paid: 'Pagado',
 }
 
 export const SUPPLIER_SORT_LABELS: Record<SupplierSort, string> = {
@@ -59,6 +82,16 @@ export const FIELD_ERROR_MESSAGES: Record<FieldErrorCode, string> = {
   due_date_before_issue: 'El vencimiento no puede ser anterior a la fecha de emisión. Revisá el año.',
   total_invalid: 'Ingresá un total mayor a cero, como 86.900,50.',
   duplicate_number: 'Ya existe un documento de este proveedor con el mismo tipo, letra y número.',
+  amount_invalid: 'Ingresá un monto mayor a cero, como 120.000,00.',
+  paid_on_invalid: 'Ingresá una fecha de pago válida.',
+  value_date_invalid: 'Ingresá una fecha de cobro válida.',
+  application_amount_invalid: 'Ingresá un monto válido, como 20.000,00, o 0 para no aplicar nada.',
+  exceeds_remaining: 'Es más de lo que falta pagar de este documento.',
+  exceeds_source: 'Repartiste más de lo que hay para aplicar.',
+  nothing_to_apply: 'Ingresá cuánto aplicar en al menos un documento.',
+  not_applicable: 'Este documento o este crédito ya no se puede usar. Volvé a abrir el reparto.',
+  remaining_changed: 'Lo que falta pagar cambió mientras tanto. Volvé a abrir el documento.',
+  document_has_applications: 'No se puede descartar: tiene pagos o créditos aplicados.',
 }
 
 export const REJECTED_WITHOUT_FIELDS_MESSAGE = 'No se pudo guardar. Revisá los datos y volvé a intentar.'

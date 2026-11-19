@@ -4,7 +4,12 @@ export type DocumentType = 'invoice' | 'delivery_note' | 'credit_note' | 'openin
 export type DocumentSource = 'upload' | 'manual'
 export type ReviewStatus = 'processing' | 'error' | 'unreviewed' | 'reviewed'
 export type DueDateSource = 'supplier_term' | 'manual'
-export type DocumentStatus = 'pending' | 'overdue'
+export type DebtStatus = 'pending' | 'overdue' | 'paid'
+export type CreditStatus = 'available' | 'applied'
+/** A `DebtStatus` for debts, a `CreditStatus` for credit notes. */
+export type DocumentStatus = DebtStatus | CreditStatus
+export type ReceivingType = Exclude<DocumentType, 'credit_note'>
+export type PaymentMethod = 'transfer' | 'echeq' | 'cash' | 'mercado_pago' | 'other'
 export type SupplierSort = 'overdue' | 'name' | 'total'
 
 export type FieldErrorCode =
@@ -20,6 +25,16 @@ export type FieldErrorCode =
   | 'due_date_before_issue'
   | 'total_invalid'
   | 'duplicate_number'
+  | 'amount_invalid'
+  | 'paid_on_invalid'
+  | 'value_date_invalid'
+  | 'application_amount_invalid'
+  | 'exceeds_remaining'
+  | 'exceeds_source'
+  | 'nothing_to_apply'
+  | 'not_applicable'
+  | 'remaining_changed'
+  | 'document_has_applications'
 
 export interface FieldError {
   field: string
@@ -46,6 +61,8 @@ export interface SupplierListRow extends SupplierFigures {
 export interface SupplierList {
   suppliers: SupplierListRow[]
   totals: SupplierFigures
+  /** YYYY-MM-DD in Buenos Aires, the date the statuses were derived for. */
+  today: string
 }
 
 export interface AccountDocument {
@@ -58,10 +75,121 @@ export interface AccountDocument {
   dueDate: string | null
   total: string
   reviewStatus: 'unreviewed' | 'reviewed'
-  /** Null for credit notes. */
-  status: DocumentStatus | null
+  status: DocumentStatus
+  /** Left to pay on a debt, left to apply on a credit note. */
+  remaining: string
+  /** Something applied and something left. */
+  partial: boolean
   /** dueDate − today, computed by the backend. Null without a due date. */
   daysToDue: number | null
+}
+
+export interface PaymentSummary {
+  id: string
+  amount: string
+  paidOn: string
+  valueDate: string | null
+  method: PaymentMethod
+  reference: string | null
+  createdByName: string
+  unapplied: string
+  status: CreditStatus
+}
+
+export interface PaymentListRow extends PaymentSummary {
+  supplierId: string
+  supplierName: string
+}
+
+export interface PaymentList {
+  /** Newest paid first. */
+  payments: PaymentListRow[]
+}
+
+export interface PaymentDetail extends PaymentListRow {
+  notes: string | null
+  applied: string
+  /** One per document, in split order. Status and remaining are as of now. */
+  applications: {
+    documentId: string
+    type: ReceivingType
+    letter: string | null
+    number: string | null
+    /** What this payment applied to it, across all its applications to it. */
+    amount: string
+    status: DebtStatus
+    remaining: string
+    partial: boolean
+  }[]
+}
+
+export interface SplitRow {
+  documentId: string
+  /** Canonical, such as "20000.00"; "0" applies nothing. */
+  amount: string
+}
+
+export type SplitSource =
+  | { kind: 'new_payment'; supplierId: string; amount: string }
+  | { kind: 'payment'; id: string }
+  | { kind: 'credit_note'; id: string }
+
+export interface SplitRequest {
+  source: SplitSource
+  /** Null asks for the suggestion. */
+  applications: SplitRow[] | null
+}
+
+export interface SplitRowResult {
+  documentId: string
+  type: ReceivingType
+  letter: string | null
+  number: string | null
+  issueDate: string
+  dueDate: string | null
+  daysToDue: number | null
+  status: DebtStatus
+  remaining: string
+  amount: string
+  /** As it would be after saving. */
+  after: { status: DebtStatus; remaining: string; partial: boolean }
+}
+
+export interface Split {
+  available: string
+  applied: string
+  unapplied: string
+  excess: string
+  rows: SplitRowResult[]
+  /** What a save would refuse with. Empty when the split can be saved. */
+  errors: FieldError[]
+}
+
+export interface PaymentInput {
+  supplierId: string
+  amount: string
+  paidOn: string
+  method: PaymentMethod
+  reference: string | null
+  /** eCheq only. */
+  valueDate: string | null
+  notes: string | null
+  applications: SplitRow[]
+}
+
+export interface ApplyCreditInput {
+  source: { kind: 'payment' | 'credit_note'; id: string }
+  applications: SplitRow[]
+}
+
+export interface MarkPaidInput {
+  documentId: string
+  /** What the person saw as left. Refused if it's no longer exactly that. */
+  amount: string
+  paidOn: string
+  method: PaymentMethod
+  reference: string | null
+  valueDate: string | null
 }
 
 export interface SupplierAccount extends SupplierFigures {
@@ -72,7 +200,11 @@ export interface SupplierAccount extends SupplierFigures {
   cuit: string | null
   paymentTermDays: number | null
   notes: string | null
+  /** YYYY-MM-DD in Buenos Aires. */
+  today: string
   documents: AccountDocument[]
+  /** Newest paid first. */
+  payments: PaymentSummary[]
 }
 
 export interface SupplierInput {
@@ -187,4 +319,29 @@ export function createDocument(input: DocumentInput): Promise<ApiResult<{ id: st
 
 export function deleteDocument(id: string): Promise<ApiResult<void>> {
   return call(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }, nothing)
+}
+
+export function previewSplit(request: SplitRequest): Promise<ApiResult<Split>> {
+  return call('/api/applications/preview', jsonBody('POST', request), json<Split>)
+}
+
+export function applyCredit(input: ApplyCreditInput): Promise<ApiResult<void>> {
+  return call('/api/applications', jsonBody('POST', input), nothing)
+}
+
+export function createPayment(input: PaymentInput): Promise<ApiResult<{ id: string }>> {
+  return call('/api/payments', jsonBody('POST', input), json<{ id: string }>)
+}
+
+export function markPaid(input: MarkPaidInput): Promise<ApiResult<{ id: string }>> {
+  return call('/api/payments/mark-paid', jsonBody('POST', input), json<{ id: string }>)
+}
+
+export function listPayments(params: { supplierId: string | null }): Promise<ApiResult<PaymentList>> {
+  const search = params.supplierId === null ? '' : `?${new URLSearchParams({ supplierId: params.supplierId }).toString()}`
+  return call(`/api/payments${search}`, { method: 'GET' }, json<PaymentList>)
+}
+
+export function getPayment(id: string): Promise<ApiResult<PaymentDetail>> {
+  return call(`/api/payments/${encodeURIComponent(id)}`, { method: 'GET' }, json<PaymentDetail>)
 }

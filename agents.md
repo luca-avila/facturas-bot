@@ -16,6 +16,8 @@ Orientation for coding agents working in this repo.
 - `backend/src/common/`: `money.ts` (`Money`, the only place for amounts), `clock.ts` (`today()` in Buenos Aires and `now()` for timestamps, the only place that reads the clock) and `cuit.ts` (`isValidCuit`).
 - `backend/src/common/dates.ts`: `isIsoDate`, `addDays` and `toDbDate` for `YYYY-MM-DD` calendar dates, plain days in UTC.
 - `backend/src/balances/`: `BalancesService`, the only place that derives document status and supplier balances (D1). Both *Resumen* and *Proveedor* read it.
+- `backend/src/applications/`: `ApplicationsService`, the only writer of `applications` (invariants 2–6, enforced by an ESLint ban). It locks a payment source first, then every document a write names, a credit-note source among them, in one `ORDER BY id` with no type filter, and reads what's left through `BalancesService`. One evaluation serves the split preview and every save. `assertDocumentChange` is invariant 6 for any change to a document.
+- `backend/src/payments/`: `PaymentsService` writes `payments`, for *Registrar pago* and *Marcar como pagado*, and hands every application to `ApplicationsService` in the same transaction. The payment reads live in `BalancesService`.
 - `backend/src/audit/`: `AuditService` writes `audit_log` in the caller's transaction (D2). Call `snapshot` first, which locks the row, then `record`.
 - `backend/src/documents/due-date.ts`: `resolveDueDate`, the only due-date rule (D4).
 - `frontend/src/labels.ts`: every Spanish label for an enum or error code, as exhaustive `Record`s.
@@ -37,4 +39,8 @@ Orientation for coding agents working in this repo.
 - **Tests that move time fake only `Date`**: `vi.useFakeTimers({ toFake: ['Date'] })`. Faking timers too would freeze Prisma, `pg` and supertest.
 - **Only `suppliers.spec.ts` gives suppliers a CUIT.** `cuit` is unique and there are five test CUITs, so it frees them before each test. Every other test creates informal suppliers.
 - **Tests that read `GET /api/suppliers` search for a unique token** in their suppliers' names, such as `` `Panadería ${randomUUID()}` ``. The list holds every other spec file's suppliers too.
+- **Write paths never pass `isolationLevel`.** Under `REPEATABLE READ`, a sum read after a `FOR UPDATE` misses a concurrent application, which over-applies. Only read-only snapshots, such as `supplierAccount`, use it.
+- **A trigger refuses changes to documents and payments that have applications** (`documents_keep_applied`, `payments_keep_applied`). A 500 with one of those names means a service check, such as `assertDocumentChange`, is missing.
+- **Specs may write `applications` directly**, to build states the service would refuse. Production code outside `src/applications/` can't: ESLint fails on the delegate, the relation fields and raw `INSERT`, `UPDATE` or `DELETE`.
+- **Prisma fills `created_at` from the JS clock**, so rows created at one faked instant tie. When a test depends on creation order, move the clock between them, as `Ledger.tick()` in `backend/test/ledger.ts` does.
 - **`createTestApp` takes an override** on the `TestingModuleBuilder`, to replace a provider, such as `AuditService` with one that fails. `createUser` returns the new user's `id`, and `signIn` returns a session.

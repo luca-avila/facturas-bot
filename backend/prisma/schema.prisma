@@ -32,6 +32,7 @@ model User {
   documentsCreated  Document[] @relation("DocumentCreatedBy")
   documentsReviewed Document[] @relation("DocumentReviewedBy")
   auditEntries      AuditLog[]
+  paymentsCreated   Payment[]
 
   @@map("users")
 }
@@ -78,6 +79,7 @@ model Supplier {
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   documents       Document[]
+  payments        Payment[]
 
   @@map("suppliers")
 }
@@ -106,7 +108,61 @@ model Document {
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  applicationsReceived Application[] @relation("ApplicationDocument")
+  applicationsGiven    Application[] @relation("ApplicationCreditNote")
+
   @@map("documents")
+}
+
+enum PaymentMethod {
+  transfer
+  echeq
+  cash
+  mercado_pago
+  other
+
+  @@map("payment_method")
+}
+
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supplierId        String        @map("supplier_id") @db.Uuid
+  supplier          Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  amount            Decimal       @db.Decimal(14, 2)
+  paidOn            DateTime      @map("paid_on") @db.Date
+  valueDate         DateTime?     @map("value_date") @db.Date
+  method            PaymentMethod
+  reference         String?
+  notes             String?
+  createdById       String        @map("created_by") @db.Uuid
+  createdBy         User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  deletedAt         DateTime?     @map("deleted_at") @db.Timestamptz(6)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  applicationsGiven Application[]
+
+  @@index([supplierId])
+  @@map("payments")
+}
+
+/**
+ * Rows never change: no updated_at or deleted_at.
+ */
+model Application {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId   String    @map("document_id") @db.Uuid
+  document     Document  @relation("ApplicationDocument", fields: [documentId], references: [id], onDelete: Restrict)
+  paymentId    String?   @map("payment_id") @db.Uuid
+  payment      Payment?  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  creditNoteId String?   @map("credit_note_id") @db.Uuid
+  creditNote   Document? @relation("ApplicationCreditNote", fields: [creditNoteId], references: [id], onDelete: Restrict)
+  amount       Decimal   @db.Decimal(14, 2)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([documentId])
+  @@index([paymentId])
+  @@index([creditNoteId])
+  @@map("applications")
 }
 
 model AuditLog {

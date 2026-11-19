@@ -28,6 +28,15 @@ export class Money {
     return new Money(this.amount.plus(other.amount));
   }
 
+  subtract(other: Money): Money {
+    return new Money(this.amount.minus(other.amount));
+  }
+
+  /** True for zero, whatever its sign. */
+  isZero(): boolean {
+    return this.amount.isZero();
+  }
+
   /** True only above zero. */
   isPositive(): boolean {
     return this.amount.greaterThan(0);

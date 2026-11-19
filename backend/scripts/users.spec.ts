@@ -36,7 +36,9 @@ function users(args: string[], stdin: string): Promise<Result> {
   });
 }
 
-describe('users script', () => {
+// Each test starts tsx at least once and hashes with argon2. Under the load of
+// the other spec files that can pass the 5 s default.
+describe('users script', { timeout: 20_000 }, () => {
   const prisma = new PrismaService();
   const password = `pw-${randomUUID()}`;
   let app: NestExpressApplication;
