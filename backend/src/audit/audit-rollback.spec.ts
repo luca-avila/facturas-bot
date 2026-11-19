@@ -5,17 +5,32 @@ import request from 'supertest';
 import { createTestApp, createUser, signIn } from '../../test/app.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { type AuditEntry, AuditService } from './audit.service.js';
+import {
+  type AuditEntity,
+  type AuditEntry,
+  AuditService,
+} from './audit.service.js';
 
-/** Writes the entry, then fails, so the caller's transaction must roll back both. */
+/**
+ * Writes each entry and records its entity. Then it fails on the first entry
+ * for `failOn`, so the caller's transaction must roll back everything it wrote.
+ */
 @Injectable()
 class FailingAuditService extends AuditService {
+  /** The entity whose entry throws. With null nothing throws, so a test that forgets it fails. */
+  failOn: AuditEntity | null = null;
+  /** The entity of each entry asked for, in order. The last one is the entry that threw. */
+  entities: AuditEntity[] = [];
+
   override async record(
     tx: Prisma.TransactionClient,
     entry: AuditEntry,
   ): Promise<void> {
+    this.entities.push(entry.entity);
     await super.record(tx, entry);
-    throw new Error('The audit write failed.');
+    if (entry.entity === this.failOn) {
+      throw new Error('The audit write failed.');
+    }
   }
 }
 
@@ -24,15 +39,26 @@ describe('a failing audit write rolls back the change', () => {
   let prisma: PrismaService;
   let session: string;
   let userId: string;
+  let audit: FailingAuditService;
 
   beforeAll(async () => {
     app = await createTestApp((builder) =>
       builder.overrideProvider(AuditService).useClass(FailingAuditService),
     );
     prisma = app.get(PrismaService);
+    const provided = app.get(AuditService);
+    if (!(provided instanceof FailingAuditService)) {
+      throw new Error('AuditService is not the failing one.');
+    }
+    audit = provided;
     const user = await createUser(app);
     userId = user.id;
     session = await signIn(app, user);
+  });
+
+  beforeEach(() => {
+    audit.failOn = null;
+    audit.entities = [];
   });
 
   afterAll(async () => {
@@ -46,6 +72,7 @@ describe('a failing audit write rolls back the change', () => {
   }
 
   it('creating a supplier returns 500 and leaves no supplier', async () => {
+    audit.failOn = 'suppliers';
     const name = `Panadería ${randomUUID()}`;
     await http()
       .post('/api/suppliers')
@@ -53,9 +80,11 @@ describe('a failing audit write rolls back the change', () => {
       .send(supplierInput(name, 30))
       .expect(500);
     expect(await prisma.supplier.count({ where: { name } })).toBe(0);
+    expect(audit.entities).toEqual(['suppliers']);
   });
 
   it('updating a term returns 500 and keeps the old term', async () => {
+    audit.failOn = 'suppliers';
     const name = `Panadería ${randomUUID()}`;
     const { id } = await prisma.supplier.create({
       data: { name, paymentTermDays: 30 },
@@ -68,9 +97,11 @@ describe('a failing audit write rolls back the change', () => {
     const row = await prisma.supplier.findUniqueOrThrow({ where: { id } });
     expect(row.paymentTermDays).toBe(30);
     expect(await prisma.auditLog.count({ where: { entityId: id } })).toBe(0);
+    expect(audit.entities).toEqual(['suppliers']);
   });
 
   it('entering a document returns 500 and leaves no document', async () => {
+    audit.failOn = 'documents';
     const { id: supplierId } = await prisma.supplier.create({
       data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
     });
@@ -93,9 +124,11 @@ describe('a failing audit write rolls back the change', () => {
         where: { supplierId, number: '0001-00004521' },
       }),
     ).toBe(0);
+    expect(audit.entities).toEqual(['documents']);
   });
 
   it('deleting a document returns 500 and leaves it counted', async () => {
+    audit.failOn = 'documents';
     const { id: supplierId } = await prisma.supplier.create({
       data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
     });
@@ -121,6 +154,7 @@ describe('a failing audit write rolls back the change', () => {
     const row = await prisma.document.findUniqueOrThrow({ where: { id } });
     expect(row.deletedAt).toBeNull();
     expect(await prisma.auditLog.count({ where: { entityId: id } })).toBe(0);
+    expect(audit.entities).toEqual(['documents']);
   });
 
   /** A reviewed invoice of 100.00, written directly. */
@@ -144,6 +178,7 @@ describe('a failing audit write rolls back the change', () => {
   }
 
   it('saving a payment with a split returns 500 and leaves no payment and no application', async () => {
+    audit.failOn = 'applications';
     const { id: supplierId } = await prisma.supplier.create({
       data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
     });
@@ -164,9 +199,11 @@ describe('a failing audit write rolls back the change', () => {
       .expect(500);
     expect(await prisma.payment.count({ where: { supplierId } })).toBe(0);
     expect(await prisma.application.count({ where: { documentId } })).toBe(0);
+    expect(audit.entities).toEqual(['payments', 'applications']);
   });
 
   it('applying credit returns 500 and leaves no application', async () => {
+    audit.failOn = 'applications';
     const { id: supplierId } = await prisma.supplier.create({
       data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
     });
@@ -193,9 +230,11 @@ describe('a failing audit write rolls back the change', () => {
       })
       .expect(500);
     expect(await prisma.application.count({ where: { documentId } })).toBe(0);
+    expect(audit.entities).toEqual(['applications']);
   });
 
   it('marking as paid returns 500 and leaves no payment and no application', async () => {
+    audit.failOn = 'applications';
     const { id: supplierId } = await prisma.supplier.create({
       data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
     });
@@ -214,5 +253,6 @@ describe('a failing audit write rolls back the change', () => {
       .expect(500);
     expect(await prisma.payment.count({ where: { supplierId } })).toBe(0);
     expect(await prisma.application.count({ where: { documentId } })).toBe(0);
+    expect(audit.entities).toEqual(['payments', 'applications']);
   });
 });
