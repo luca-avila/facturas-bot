@@ -383,6 +383,45 @@ describe('applying existing credit', () => {
       expect((await ledger.writes(supplier)).payments).toBe(0);
     });
 
+    it('a credit note with a lower id than its row is locked with the row, not after it', async () => {
+      const supplier = await ledger.supplier();
+      const [nc, f] = twoIds();
+      await ledger.insertDocument(supplier, {
+        id: nc,
+        type: 'credit_note',
+        total: '30.00',
+        due_date: null,
+        due_date_source: null,
+      });
+      await ledger.insertDocument(supplier, { id: f, total: '50.00' });
+      const holder = await holdLock(f);
+
+      const first = apply({ kind: 'credit_note', id: nc }, [
+        { documentId: f, amount: '30.00' },
+      ]).then((res) => res);
+      const [firstPid] = await waitersOn([holder.pid], 1);
+      const second = ledger
+        .post(
+          '/api/payments',
+          ledger.paymentBody(supplier, '20.00', [
+            { documentId: nc, amount: '10.00' },
+            { documentId: f, amount: '10.00' },
+          ]),
+        )
+        .then((res) => res);
+      await waitersOn([holder.pid, firstPid], 2);
+      await holder.release();
+
+      const [applied, paid] = await Promise.all([first, second]);
+      expect(applied.status).toBe(204);
+      expect(paid.status).toBe(409);
+      expect(paid.body).toEqual({
+        errors: [{ field: `applications.${nc}`, code: 'not_applicable' }],
+      });
+      expect(await ledger.applicationsTo([f])).toEqual([[f, '30.00']]);
+      expect((await ledger.writes(supplier)).payments).toBe(0);
+    });
+
     it('an invoice sent as a credit-note source gets not_applicable, not a deadlock', async () => {
       const supplier = await ledger.supplier();
       const [g, f] = twoIds();
