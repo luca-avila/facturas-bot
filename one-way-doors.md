@@ -5,6 +5,8 @@ Changes whose effects can't be undone with a revert. They always get a thorough 
 - Migrations that drop or transform columns holding real data
 - Hard-deleting documents, images or payments (normal deletion is soft, so it's a two-way door)
 - Bulk changes to stored amounts, due dates or applications (a change to how payment status is derived is a two-way door, because status isn't stored)
+- How payments and applications are written or locked, once real data exists and while the app can't edit or delete them (a revert leaves the wrong applications in place, and over-applying credit understates debt with nothing flagging it)
+- Which database the test harness picks (`npm test` drops it `WITH (FORCE)`, so pointed at the real database it deletes it: `testDatabaseUrl` and `isTestDatabaseName` are all that stop that)
 - Re-running extraction on documents that already have data (it can overwrite human corrections)
 - Image compression settings (originals aren't kept, so an image compressed too hard can't be recovered)
 - Document deduplication (if it fails, documents get loaded twice and debt is overstated)
