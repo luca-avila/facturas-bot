@@ -13,14 +13,17 @@ const off = (/** @type {string[]} */ rules) =>
 // replaces a rule's options instead of merging them, so each file gets the
 // rule built from the groups that apply to it.
 const APPLICATIONS_MESSAGE = 'Only src/applications/ writes applications (invariants 2–6).';
-const WRITE_SQL = String.raw`/\b(insert\s+into|update|delete\s+from|truncate(\s+table)?)\s+"?applications\b/i`;
+const WRITE_SQL = String.raw`/\b(insert\s+into|update|delete\s+from|truncate(\s+table)?)\s+("?\w+"?\s*\.\s*)?"?applications\b/i`;
 const applicationWriteSelectors = [
   // The Prisma delegate, as `.application` and as `['application']`.
   { selector: "MemberExpression[property.name='application']", message: APPLICATIONS_MESSAGE },
   { selector: "MemberExpression[property.value='application']", message: APPLICATIONS_MESSAGE },
+  // The delegate destructured, as `{ application }`, renamed, or in a parameter.
+  { selector: "ObjectPattern > Property[key.name='application']", message: APPLICATIONS_MESSAGE },
+  { selector: "ObjectPattern > Property[key.value='application']", message: APPLICATIONS_MESSAGE },
   // Nested writes through the relation fields.
   { selector: 'Property[key.name=/^applications(Received|Given)$/]', message: APPLICATIONS_MESSAGE },
-  // Raw SQL, in template and string literals.
+  // Raw SQL, in template and string literals, with or without a schema.
   { selector: `TemplateElement[value.raw=${WRITE_SQL}]`, message: APPLICATIONS_MESSAGE },
   { selector: `Literal[value=${WRITE_SQL}]`, message: APPLICATIONS_MESSAGE },
 ];

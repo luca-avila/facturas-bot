@@ -50,12 +50,31 @@ const applicationWrites = {
   'raw UPDATE applications': 'export const f = () => tx.$executeRaw`UPDATE applications SET amount = 1`;\n',
   'raw DELETE FROM applications':
     "export const f = () => tx.$executeRawUnsafe('DELETE FROM applications');\n",
+  'a destructured { application }':
+    'export const f = () => {\n  const { application } = tx;\n  return application.create({ data: {} });\n};\n',
+  'a destructured { application: apps }':
+    'export const f = () => {\n  const { application: apps } = tx;\n  return apps.create({ data: {} });\n};\n',
+  'a { application } parameter':
+    'export const f = () => prisma.$transaction(({ application }) => application.create({ data: {} }));\n',
+  'raw INSERT INTO public.applications':
+    'export const f = () => tx.$executeRaw`INSERT INTO public.applications (amount) VALUES (${1})`;\n',
+  'raw insert into "public"."applications"':
+    "export const f = () => tx.$executeRawUnsafe('insert into \"public\".\"applications\" (amount) values (1)');\n",
+  'raw UPDATE public.applications':
+    'export const f = () => tx.$executeRaw`UPDATE public.applications SET amount = 1`;\n',
+  'raw DELETE FROM "public".applications':
+    "export const f = () => tx.$executeRawUnsafe('DELETE FROM \"public\".applications');\n",
 };
 
 const applicationReads = {
   'SELECT … FROM applications':
     'export const f = () => tx.$queryRaw`SELECT SUM(amount) FROM applications WHERE document_id = ${1}`;\n',
   '{ applications: rows }': 'export const f = (rows: unknown[]) => ({ applications: rows });\n',
+  'SELECT … FROM public.applications':
+    'export const f = () => tx.$queryRaw`SELECT SUM(amount) FROM public.applications WHERE document_id = ${1}`;\n',
+  'SELECT … FROM "public"."applications"':
+    "export const f = () => tx.$queryRawUnsafe('SELECT amount FROM \"public\".\"applications\"');\n",
+  '{ application: rows }': 'export const f = (rows: unknown[]) => ({ application: rows });\n',
 };
 
 describe('backend lint bans', () => {
@@ -103,6 +122,8 @@ describe('backend lint bans', () => {
     it('allows tx.application.create(…) in src/applications/ and in spec files', async () => {
       expect(await banErrors(APPLICATIONS, applicationWrites['tx.application.create(…)'])).toEqual([]);
       expect(await banErrors(SPEC, applicationWrites['tx.application.create(…)'])).toEqual([]);
+      expect(await banErrors(APPLICATIONS, applicationWrites['a destructured { application }'])).toEqual([]);
+      expect(await banErrors(SPEC, applicationWrites['a destructured { application }'])).toEqual([]);
     });
 
     it('does not exempt clock.ts', async () => {
