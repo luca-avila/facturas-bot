@@ -15,6 +15,5 @@ Format: `- YYYY-MM-DD | rule or category | what was wrong`
 - 2026-11-18 | tests | the payment order tests created payments in the order they were paid, or at one faked instant, so dropping paid_on from the order passed balances.spec always and payments.spec half the time
 - 2026-11-18 | tests | nothing tested that not_applicable is only for rows above zero; refusing a row of 0 for a document deleted since the preview passed every test
 - 2026-11-18 | logic | Pago registrado keyed its rows by documentId, which repeats when a payment's leftover is later applied to a document it already paid part of
-- 2026-11-19 | tests | the destructured-delegate ban had a selector for a string key, { 'application': apps }, that no lint case used; deleting it passed every case
 - 2026-11-19 | tests | no lint read case had a write keyword in it, so making the schema group's dot optional, which flags SELECT … FOR UPDATE OF applications as a write, passed every case
 - 2026-11-19 | tests | both lock-order tests gave the credit-note source the higher id, so locking the rows and then the source in a second statement passed them, though it deadlocks when the source has the lower id
