@@ -32,9 +32,11 @@ const STEP_ONE_FIELDS = ['amount', 'paidOn', 'valueDate']
 function RegistrarPago() {
   const [params] = useSearchParams()
   const ids = useId()
+  /** The supplier the link came from, if any: it picks the first supplier and where Cancelar goes. */
+  const linkedSupplierId = params.get('proveedor') ?? ''
   const [suppliers, setSuppliers] = useState<ApiResult<SupplierList> | null>(null)
   const [details, setDetails] = useState<Details>({
-    supplierId: params.get('proveedor') ?? '',
+    supplierId: linkedSupplierId,
     amount: '',
     fields: initialPaymentFields(''),
     notes: '',
@@ -63,7 +65,7 @@ function RegistrarPago() {
   }, [])
 
   const supplier = suppliers?.ok ? suppliers.value.suppliers.find((s) => s.id === details.supplierId) : undefined
-  const cancelPath = details.supplierId === '' ? '/pagos' : `/proveedores/${details.supplierId}`
+  const cancelPath = linkedSupplierId === '' ? '/pagos' : `/proveedores/${encodeURIComponent(linkedSupplierId)}`
 
   async function next(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
