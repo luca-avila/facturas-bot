@@ -7,7 +7,7 @@ Orientation for coding agents working in this repo.
 - `system-design.md`: data model, extraction pipeline and validation rules. Source of truth for how the system works.
 - `README.md`: product overview, stack and setup.
 - `one-way-doors.md`: changes that need a thorough human review.
-- `codingStandards.md`: code review rules, and the checks the project scaffold must add.
+- `codingStandards.md`: code review rules.
 - `plans/`: implementation plans, one per feature.
 - `design/wireframes/`: Claude Design wireframes for every screen, as static HTML. Every frame has an id, such as `id="7c"`, so you can grep one instead of reading the whole file, or open the file in a browser. They're the reference for layout and Spanish copy, and `system-design.md` wins on behavior. Build screens in `frontend/` with its own CSS: don't copy their markup, inline styles or `support.js`.
 - `memory.md`: inbox of review fixes for the weekly retro.

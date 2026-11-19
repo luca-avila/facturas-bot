@@ -66,12 +66,3 @@ Check: server code that transforms image bytes.
 A validation returns issues and the caller writes the result. Each one has a code, a Spanish message, and a test with a passing case and a failing case.
 Why: an untested check is a silent path into the balance.
 Check: a validation that writes to the database, or one that's missing any of the above.
-
-## To automate in the project scaffold
-
-These risks should be caught by tooling, not review. Until a check exists, the reviewer looks for it by hand. Once it exists, delete its row.
-
-| Risk | Check |
-| --- | --- |
-| Internal identifiers shown in the UI | Exhaustive `Record<DocumentType, string>` labels, so a missing Spanish label doesn't compile |
-| Broken money invariants | Tests against a real Postgres, since locks and `CHECK` constraints can't be tested with mocks |
