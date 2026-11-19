@@ -77,6 +77,8 @@ const applicationReads = {
   'SELECT … FROM "public"."applications"':
     "export const f = () => tx.$queryRawUnsafe('SELECT amount FROM \"public\".\"applications\"');\n",
   '{ application: rows }': 'export const f = (rows: unknown[]) => ({ application: rows });\n',
+  'SELECT … FOR UPDATE OF applications':
+    'export const f = () => tx.$queryRaw`SELECT id FROM applications WHERE document_id = ${1} FOR UPDATE OF applications`;\n',
 };
 
 describe('backend lint bans', () => {
