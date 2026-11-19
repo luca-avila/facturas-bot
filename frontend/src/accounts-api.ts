@@ -109,12 +109,13 @@ export interface PaymentList {
 export interface PaymentDetail extends PaymentListRow {
   notes: string | null
   applied: string
-  /** In split order. Status and remaining are as of now. */
+  /** One per document, in split order. Status and remaining are as of now. */
   applications: {
     documentId: string
     type: ReceivingType
     letter: string | null
     number: string | null
+    /** What this payment applied to it, across all its applications to it. */
     amount: string
     status: DebtStatus
     remaining: string

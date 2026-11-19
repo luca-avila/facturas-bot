@@ -72,9 +72,8 @@ function PagoRegistrado() {
 
       {payment.applications.length > 0 && (
         <ul className="list">
-          {/* A payment can apply to one document twice: once when recorded, then from Aplicar crédito. */}
-          {payment.applications.map((application, index) => (
-            <li key={`${application.documentId}:${index}`} className="row">
+          {payment.applications.map((application) => (
+            <li key={application.documentId} className="row">
               <span className="row-main">
                 <span className="row-title">{documentTitle(application)}</span>
                 <span className={`badge ${application.status}`}>{DOCUMENT_STATUS_LABELS[application.status]}</span>

@@ -264,7 +264,9 @@ export class BalancesService {
 
   /**
    * A payment with what it applied to each document, and each document's
-   * state now, in split order. Null for an unknown, non-UUID or deleted id.
+   * state now, in split order. A document appears once, summed, when the
+   * payment applied to it more than once. Null for an unknown, non-UUID or
+   * deleted id.
    */
   async payment(id: string): Promise<PaymentDetail | null> {
     if (!isUuid(id)) return null;
@@ -274,11 +276,15 @@ export class BalancesService {
           this.paymentRows(Prisma.sql`c.id = ${id}::uuid`),
         ),
         this.prisma.$queryRaw<PaymentApplicationRow[]>`
-          WITH counted AS (${this.counted(today())})
-          SELECT c.id AS document_id, c.type, c.letter, c.number, x.amount::text AS amount,
+          WITH counted AS (${this.counted(today())}),
+          given AS (
+            SELECT document_id, SUM(amount) AS amount
+            FROM applications WHERE payment_id = ${id}::uuid
+            GROUP BY document_id
+          )
+          SELECT c.id AS document_id, c.type, c.letter, c.number, g.amount::text AS amount,
                  c.status, c.remaining::text AS remaining, c.partial
-          FROM applications x JOIN counted c ON c.id = x.document_id
-          WHERE x.payment_id = ${id}::uuid
+          FROM given g JOIN counted c ON c.id = g.document_id
           ORDER BY c.sort_date, c.issue_date_value, c.created_at, c.id`,
       ],
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },

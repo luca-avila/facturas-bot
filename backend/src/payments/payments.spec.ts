@@ -540,6 +540,50 @@ describe('saving a payment', () => {
       ]);
     });
 
+    it('lists each document once, with everything this payment applied to it', async () => {
+      const { supplier, a, b } = await aAndB();
+      const id = await ledger.pay(supplier, '120.00', [
+        { documentId: b, amount: '20.00' },
+        { documentId: a, amount: '50.00' },
+      ]);
+      await ledger
+        .post('/api/applications', {
+          source: { kind: 'payment', id },
+          applications: [{ documentId: a, amount: '30.00' }],
+        })
+        .expect(204);
+
+      const res = await ledger.get(`/api/payments/${id}`).expect(200);
+      const detail = res.body as PaymentDetail;
+      expect(detail).toMatchObject({
+        applied: '100.00',
+        unapplied: '20.00',
+        status: 'available',
+      });
+      expect(detail.applications).toEqual([
+        {
+          documentId: a,
+          type: 'invoice',
+          letter: null,
+          number: null,
+          amount: '80.00',
+          status: 'overdue',
+          remaining: '20.00',
+          partial: true,
+        },
+        {
+          documentId: b,
+          type: 'invoice',
+          letter: null,
+          number: null,
+          amount: '20.00',
+          status: 'pending',
+          remaining: '30.00',
+          partial: true,
+        },
+      ]);
+    });
+
     it.each([
       ['an unknown id', randomUUID()],
       ['a non-UUID id', 'not-a-uuid'],
