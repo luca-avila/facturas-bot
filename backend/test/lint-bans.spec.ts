@@ -54,6 +54,8 @@ const applicationWrites = {
     'export const f = () => {\n  const { application } = tx;\n  return application.create({ data: {} });\n};\n',
   'a destructured { application: apps }':
     'export const f = () => {\n  const { application: apps } = tx;\n  return apps.create({ data: {} });\n};\n',
+  "a destructured { 'application': apps }":
+    "export const f = () => {\n  const { 'application': apps } = tx;\n  return apps.create({ data: {} });\n};\n",
   'a { application } parameter':
     'export const f = () => prisma.$transaction(({ application }) => application.create({ data: {} }));\n',
   'raw INSERT INTO public.applications':
