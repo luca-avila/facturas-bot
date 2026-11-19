@@ -17,7 +17,7 @@ You run once a week. Your goal is to stop repeated mistakes from happening again
 ## What you look for
 1. **Repeated mistakes** (2 or more times in `memory.md`). Propose the cheapest fix that catches it automatically, in this order of preference:
    - an ESLint rule, a type, or a test (deterministic, costs no tokens)
-   - a line in `codingStandards.md`
+   - a line in `codingStandards.md`, or, for how tests are written, a line in `.claude/agents/implementer.md` (`codingStandards.md` keeps test rules out)
 2. **Navigation**: if agents wasted time finding where something lives, propose a pointer in `agents.md`.
 3. **Doors**: if something turned out to be irreversible and wasn't in `one-way-doors.md`, propose adding it.
 4. **Instruction bloat**: rules that are never used, contradict each other, or are already covered by a check. Propose deleting them.
