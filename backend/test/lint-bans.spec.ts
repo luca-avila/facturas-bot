@@ -1,11 +1,40 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ESLint } from 'eslint';
+import { ESLint, Linter } from 'eslint';
+import tseslint from 'typescript-eslint';
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const eslint = new ESLint({ cwd: backendDir });
 
 const BAN_RULES = new Set(['no-restricted-globals', 'no-restricted-properties', 'no-restricted-syntax']);
+
+/** Each ban rule's entries in the config `file` gets, without the severity. */
+async function banEntries(file: string): Promise<Map<string, unknown[]>> {
+  const config = (await eslint.calculateConfigForFile(path.join(backendDir, file))) as Linter.Config;
+  const entries = new Map<string, unknown[]>();
+  for (const rule of BAN_RULES) {
+    const setting: unknown = config.rules?.[rule];
+    entries.set(rule, Array.isArray(setting) ? setting.slice(1) : []);
+  }
+  return entries;
+}
+
+const linter = new Linter({ configType: 'flat' });
+
+/**
+ * Whether these ban entries catch `code`. Selectors and names need no types,
+ * so this skips the typed program and takes a millisecond.
+ */
+function caught(entries: Map<string, unknown[]>, code: string): boolean {
+  const rules: Linter.RulesRecord = {};
+  for (const [rule, list] of entries) {
+    rules[rule] = ['error', ...list] as Linter.RuleEntry;
+  }
+  const config: Linter.Config = { files: ['**/*.ts'], languageOptions: { parser: tseslint.parser }, rules };
+  const messages = linter.verify(code, config, 'case.ts');
+  expect(messages.filter((m) => m.fatal)).toEqual([]);
+  return messages.some((m) => m.ruleId !== null && BAN_RULES.has(m.ruleId));
+}
 
 /**
  * Lints `code` as if it were the content of `file`, with the real config.
@@ -29,6 +58,7 @@ const APPLICATIONS = 'src/applications/applications.service.ts';
 const floatCode = {
   parseFloat: "export const x = parseFloat('1.5');\n",
   'Number.parseFloat': "export const x = Number.parseFloat('1.5');\n",
+  'globalThis.parseFloat': "export const x = globalThis.parseFloat('1.5');\n",
   toFixed: 'export const f = (x: number) => x.toFixed(2);\n',
 };
 
@@ -137,6 +167,29 @@ describe('backend lint bans', () => {
     it('keeps the clock ban in src/applications/, and the clock exception in clock.ts', async () => {
       expect(await banErrors(APPLICATIONS, clockCode['new Date()'])).not.toEqual([]);
       expect(await banErrors(CLOCK, clockCode['new Date()'])).toEqual([]);
+    });
+  });
+
+  // An entry no case needs can be deleted, or broken, with every case still
+  // passing. Each entry must be the only one that catches some error case.
+  describe('coverage', () => {
+    const errorCases = { ...floatCode, ...clockCode, ...applicationWrites };
+
+    it('every ban entry outside the exceptions has an error case that needs it', async () => {
+      const entries = await banEntries(MAIN);
+      const missed = Object.entries(errorCases).filter(([, code]) => !caught(entries, code));
+      expect(missed.map(([name]) => name)).toEqual([]);
+
+      const unneeded: string[] = [];
+      for (const [rule, list] of entries) {
+        for (const entry of list) {
+          const without = new Map(entries).set(rule, list.filter((other) => other !== entry));
+          if (Object.values(errorCases).every((code) => caught(without, code))) {
+            unneeded.push(`${rule}: ${JSON.stringify(entry)}`);
+          }
+        }
+      }
+      expect(unneeded).toEqual([]);
     });
   });
 

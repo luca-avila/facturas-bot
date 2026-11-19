@@ -30,6 +30,13 @@ It's either `issue_date + payment_term_days`, computed in one function, or typed
 Why: printed dates can look right and still pass every other check.
 Check: code that writes `due_date` from extraction output.
 
+## Concurrency
+
+### C1. A check still holds when its write lands
+A read that decides a write, such as a limit, what's left to apply or a duplicate, comes after a lock on what it read, or runs in the same synchronous step that records the write, or is backed by a constraint. Locks follow the one order in `agents.md`: an existing payment first, then every document in one `ORDER BY id FOR UPDATE`. A response built from several reads takes them in one snapshot.
+Why: parallel sign-ins got past the rate limit, a supplier's figures disagreed with its own document list, and two saves deadlocked. Each passed its tests, and each was found in review.
+Check: an `await` between a check and the write it guards, a `FOR UPDATE` outside that order, or a response built from two queries outside one transaction.
+
 ## Extraction
 
 ### E1. No LLM calls inside a database transaction
@@ -59,12 +66,3 @@ Check: server code that transforms image bytes.
 A validation returns issues and the caller writes the result. Each one has a code, a Spanish message, and a test with a passing case and a failing case.
 Why: an untested check is a silent path into the balance.
 Check: a validation that writes to the database, or one that's missing any of the above.
-
-## To automate in the project scaffold
-
-These risks should be caught by tooling, not review. Until a check exists, the reviewer looks for it by hand. Once it exists, delete its row.
-
-| Risk | Check |
-| --- | --- |
-| Internal identifiers shown in the UI | Exhaustive `Record<DocumentType, string>` labels, so a missing Spanish label doesn't compile |
-| Broken money invariants | Tests against a real Postgres, since locks and `CHECK` constraints can't be tested with mocks |

@@ -7,7 +7,7 @@ Orientation for coding agents working in this repo.
 - `system-design.md`: data model, extraction pipeline and validation rules. Source of truth for how the system works.
 - `README.md`: product overview, stack and setup.
 - `one-way-doors.md`: changes that need a thorough human review.
-- `codingStandards.md`: code review rules, and the checks the project scaffold must add.
+- `codingStandards.md`: code review rules.
 - `plans/`: implementation plans, one per feature.
 - `design/wireframes/`: Claude Design wireframes for every screen, as static HTML. Every frame has an id, such as `id="7c"`, so you can grep one instead of reading the whole file, or open the file in a browser. They're the reference for layout and Spanish copy, and `system-design.md` wins on behavior. Build screens in `frontend/` with its own CSS: don't copy their markup, inline styles or `support.js`.
 - `memory.md`: inbox of review fixes for the weekly retro.
@@ -31,6 +31,7 @@ Orientation for coding agents working in this repo.
 
 - **The repo is public.** Never copy real supplier names, CUITs, amounts or anything else from `samples/` into a committed file, including tests and fixtures. Use invented data.
 - **Spanish UI, English code.** Everything the user sees is in Spanish. Code, identifiers and docs are in English.
+- **Every review fix gets a `memory.md` line, including one that lands later**, from an answered open question or a follow-up plan. Its commit message starts with `review:`. A plan that fixes review findings never puts `memory.md` out of scope.
 - **Tests compute hashes, never write them out.** The CUIT check reads about 1 in 250 sha256 hex digests as a valid CUIT, and stays strict on purpose. Compute each hash at run time from the bytes the test uses.
 - **Money is never a float.** Use `numeric` in the database and a decimal type in code.
 - **Every endpoint is behind the global `SessionGuard`.** A new route needs a session without anyone adding a guard. Use `@CurrentUser()` for the acting user.

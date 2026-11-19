@@ -15,6 +15,10 @@ export default defineConfig({
     include: ['**/*.spec.ts'],
     exclude: ['**/node_modules/**', 'dist/**'],
     globalSetup: ['./test/global-setup.ts'],
+    // Sign-in, user and script tests hash with argon2 at its real cost, while
+    // the other spec files run in parallel. Under that load one test can take
+    // over 8 s, past the 5 s default.
+    testTimeout: 20_000,
     env: {
       // Workers only ever see the test database, never the dev one.
       DATABASE_URL: testDatabaseUrl(process.env.DATABASE_URL),
