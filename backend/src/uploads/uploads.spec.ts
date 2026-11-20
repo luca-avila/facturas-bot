@@ -65,6 +65,9 @@ describe('uploads', () => {
 
   const created = (res: Response) => res.body as Created;
 
+  const getImage = (id: string) =>
+    http().get(`/api/images/${id}`).set('Cookie', `session=${session}`);
+
   async function uploadNew(photos = [jpeg(), png()]): Promise<{
     id: string;
     photos: Buffer[];
@@ -196,6 +199,62 @@ describe('uploads', () => {
       ).toEqual([sha256(photoA), sha256(photoB)]);
       const added = [...files()].filter((file) => !filesBefore.has(file));
       expect(added.sort()).toEqual([...keys].sort());
+    });
+
+    it('reads it back for Documento', async () => {
+      const images = await prisma.documentImage.findMany({
+        where: { documentId: created(res).id },
+        orderBy: { position: 'asc' },
+      });
+      const detail = await http()
+        .get(`/api/documents/${created(res).id}`)
+        .set('Cookie', `session=${session}`)
+        .expect(200);
+      expect(detail.body).toEqual({
+        id: created(res).id,
+        source: 'upload',
+        reviewStatus: 'processing',
+        type: null,
+        letter: null,
+        number: null,
+        createdByName: 'Ana',
+        createdOn: '2026-11-18',
+        createdTime: '23:30',
+        images: [
+          { id: images[0].id, position: 1 },
+          { id: images[1].id, position: 2 },
+        ],
+      });
+    });
+
+    it('serves each image as uploaded, never cached or run as a page', async () => {
+      const images = await prisma.documentImage.findMany({
+        where: { documentId: created(res).id },
+        orderBy: { position: 'asc' },
+      });
+      const sent = [
+        { bytes: photoA, type: 'image/jpeg' },
+        { bytes: photoB, type: 'image/png' },
+      ];
+      for (const [i, image] of images.entries()) {
+        const served = await getImage(image.id).expect(200);
+        expect(served.headers).toMatchObject({
+          'content-type': sent[i].type,
+          'content-length': String(sent[i].bytes.length),
+          'cache-control': 'private, no-store',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy':
+            "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        });
+        expect(sha256(served.body as Buffer)).toBe(sha256(sent[i].bytes));
+      }
+    });
+
+    it('serves no image without a session (acceptance 3)', async () => {
+      const [image] = await prisma.documentImage.findMany({
+        where: { documentId: created(res).id },
+      });
+      await http().get(`/api/images/${image.id}`).expect(401);
     });
 
     it('takes the type from the bytes, never from the Content-Type', async () => {
@@ -330,6 +389,11 @@ describe('uploads', () => {
 
       const again = await post(z.photos).expect(200);
       expect(again.body).toEqual({ id: n.id, alreadyUploaded: true });
+
+      const zImage = await prisma.documentImage.findFirstOrThrow({
+        where: { documentId: z.id },
+      });
+      await getImage(zImage.id).expect(404);
     });
 
     it('names the oldest document when a hash is somehow in two', async () => {
@@ -390,6 +454,32 @@ describe('uploads', () => {
         });
         expect(new Set(holders.map((h) => h.documentId)).size).toBe(1);
       }
+    });
+  });
+
+  describe('images', () => {
+    it.each([
+      ['a non-UUID id', 'nope'],
+      ['an unknown id', randomUUID()],
+    ])('answers 404 for %s', async (_, id) => {
+      await getImage(id).expect(404);
+    });
+
+    it('fails with 500, not 404, when a row has no file', async () => {
+      const { id: documentId } = await uploadNew([jpeg()]);
+      const { id } = await prisma.documentImage.create({
+        data: {
+          documentId,
+          position: 2,
+          storageKey: `${randomUUID()}.jpg`,
+          mimeType: 'image/jpeg',
+          width: 1650,
+          height: 2200,
+          sizeBytes: 100,
+          sha256: sha256(jpeg()),
+        },
+      });
+      await getImage(id).expect(500);
     });
   });
 

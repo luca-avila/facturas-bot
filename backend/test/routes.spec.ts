@@ -59,6 +59,10 @@ describe('every route', () => {
         'post /api/payments/mark-paid',
         'get /api/payments',
         'get /api/payments/:id',
+        'post /api/uploads',
+        'get /api/uploads',
+        'get /api/documents/:id',
+        'get /api/images/:id',
       ]),
     );
   });

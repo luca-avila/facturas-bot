@@ -2,11 +2,17 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ApplicationsService } from '../applications/applications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
-import { now } from '../common/clock.js';
+import { BUSINESS_TIME_ZONE, now } from '../common/clock.js';
 import { toDbDate } from '../common/dates.js';
 import { conflict, invalidRequest } from '../common/field-errors.js';
 import { uniqueViolationIndex } from '../common/unique-violation.js';
 import { isUuid } from '../common/uuid.js';
+import {
+  type DocumentSource,
+  type DocumentType,
+  Prisma,
+  type ReviewStatus,
+} from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { normalizeNumber } from './document-number.js';
 import type { ManualDocumentFields } from './document-input.js';
@@ -15,7 +21,38 @@ import { resolveDueDate } from './due-date.js';
 /** Invariant 7. Only this index means a duplicate document number. */
 const NUMBER_INDEX = 'documents_number_unique';
 
-/** Writes documents. Every write leaves an `audit_log` entry in its transaction (D2). */
+/** One document for *Documento*. */
+export interface DocumentDetail {
+  id: string;
+  source: DocumentSource;
+  reviewStatus: ReviewStatus;
+  type: DocumentType | null;
+  letter: string | null;
+  number: string | null;
+  createdByName: string;
+  /** YYYY-MM-DD and HH:MM of created_at in Buenos Aires. */
+  createdOn: string;
+  createdTime: string;
+  /** By position. Empty for a manual document. */
+  images: { id: string; position: number }[];
+}
+
+interface DetailRow {
+  id: string;
+  source: DocumentSource;
+  review_status: ReviewStatus;
+  type: DocumentType | null;
+  letter: string | null;
+  number: string | null;
+  created_by_name: string;
+  created_on: string;
+  created_time: string;
+}
+
+/**
+ * Writes documents, and reads one for *Documento*. Every write leaves an
+ * `audit_log` entry in its transaction (D2).
+ */
 @Injectable()
 export class DocumentsService {
   constructor(
@@ -87,6 +124,43 @@ export class DocumentsService {
       }
       throw error;
     }
+  }
+
+  /** Null for a bad id, an unknown one, or a deleted document (D3). */
+  async detail(id: string): Promise<DocumentDetail | null> {
+    if (!isUuid(id)) return null;
+    const localCreatedAt = Prisma.sql`(d.created_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
+    const [[row], images] = await this.prisma.$transaction(
+      [
+        this.prisma.$queryRaw<DetailRow[]>`
+          SELECT d.id, d.source, d.review_status, d.type, d.letter, d.number,
+                 u.name AS created_by_name,
+                 to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,
+                 to_char(${localCreatedAt}, 'HH24:MI') AS created_time
+          FROM documents d
+          JOIN users u ON u.id = d.created_by
+          WHERE d.id = ${id}::uuid AND d.deleted_at IS NULL`,
+        this.prisma.documentImage.findMany({
+          where: { documentId: id },
+          orderBy: { position: 'asc' },
+          select: { id: true, position: true },
+        }),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+    if (row === undefined) return null;
+    return {
+      id: row.id,
+      source: row.source,
+      reviewStatus: row.review_status,
+      type: row.type,
+      letter: row.letter,
+      number: row.number,
+      createdByName: row.created_by_name,
+      createdOn: row.created_on,
+      createdTime: row.created_time,
+      images,
+    };
   }
 
   /**

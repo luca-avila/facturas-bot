@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request, { type Test } from 'supertest';
 import {
@@ -675,6 +675,75 @@ describe('documents', () => {
           user_id: ana.id,
         },
       ]);
+    });
+  });
+
+  describe('reading one for Documento', () => {
+    const read = (id: string) =>
+      withSession(http().get(`/api/documents/${id}`));
+
+    it('returns a manual document, with no images', async () => {
+      const id = await enter(
+        invoice(await newSupplier(30), { number: '0003-00000077' }),
+      );
+      const res = await read(id).expect(200);
+      expect(res.body).toEqual({
+        id,
+        source: 'manual',
+        reviewStatus: 'reviewed',
+        type: 'invoice',
+        letter: 'A',
+        number: '0003-00000077',
+        createdByName: 'Ana',
+        // NOW is 12:00 in Buenos Aires.
+        createdOn: '2026-11-09',
+        createdTime: '12:00',
+        images: [],
+      });
+    });
+
+    it.each([
+      ['a non-UUID id', 'nope'],
+      ['an unknown id', randomUUID()],
+    ])('answers 404 for %s', async (_, id) => {
+      await read(id).expect(404);
+    });
+
+    it('lists an upload’s images by position, whatever order they were stored in', async () => {
+      const { id } = await prisma.document.create({
+        data: {
+          source: 'upload',
+          reviewStatus: 'processing',
+          createdById: ana.id,
+        },
+      });
+      const imageIds: Record<number, string> = {};
+      for (const position of [2, 1]) {
+        const image = await prisma.documentImage.create({
+          data: {
+            documentId: id,
+            position,
+            storageKey: `${randomUUID()}.jpg`,
+            mimeType: 'image/jpeg',
+            width: 1650,
+            height: 2200,
+            sizeBytes: 100,
+            sha256: createHash('sha256').update(randomUUID()).digest('hex'),
+          },
+        });
+        imageIds[position] = image.id;
+      }
+      const res = await read(id).expect(200);
+      expect((res.body as { images: unknown }).images).toEqual([
+        { id: imageIds[1], position: 1 },
+        { id: imageIds[2], position: 2 },
+      ]);
+    });
+
+    it('answers 404 for a deleted document', async () => {
+      const id = await enter(invoice(await newSupplier(30)));
+      await remove(id).expect(204);
+      await read(id).expect(404);
     });
   });
 });

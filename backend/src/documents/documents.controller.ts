@@ -2,14 +2,16 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
+  NotFoundException,
   Param,
   Post,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { SessionUser } from '../auth/session.js';
 import { parseDocumentInput } from './document-input.js';
-import { DocumentsService } from './documents.service.js';
+import { type DocumentDetail, DocumentsService } from './documents.service.js';
 
 @Controller('documents')
 export class DocumentsController {
@@ -21,6 +23,13 @@ export class DocumentsController {
     @CurrentUser() user: SessionUser,
   ): Promise<{ id: string }> {
     return this.documents.createManual(parseDocumentInput(body), user);
+  }
+
+  @Get(':id')
+  async detail(@Param('id') id: string): Promise<DocumentDetail> {
+    const doc = await this.documents.detail(id);
+    if (doc === null) throw new NotFoundException();
+    return doc;
   }
 
   @Delete(':id')

@@ -1,16 +1,24 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { ADVISORY_LOCKS } from '../common/advisory-locks.js';
-import { now } from '../common/clock.js';
+import { BUSINESS_TIME_ZONE, now, today } from '../common/clock.js';
+import { addDays } from '../common/dates.js';
 import {
   conflict,
   type FieldError,
   invalidRequest,
 } from '../common/field-errors.js';
+import { Prisma } from '../generated/prisma/client.js';
+import type { DocumentType, ReviewStatus } from '../generated/prisma/client.js';
+import { isUuid } from '../common/uuid.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ImageStore } from './image-store.js';
 import { inspectPhoto, type Photo } from './photo.js';
+import type { UploadList, UploadScope } from './uploads.types.js';
+
+/** Today and the six days before, in Buenos Aires. */
+const LISTED_DAYS = 7;
 
 /** A file as multer keeps it in memory. Only these fields are read. */
 export interface UploadedPhoto {
@@ -28,6 +36,21 @@ interface PagePhoto {
   photo: Photo;
   /** `file.buffer` itself: the bytes hashed are the bytes written (E5). */
   bytes: Buffer;
+}
+
+interface UploadListRow {
+  id: string;
+  review_status: ReviewStatus;
+  page_count: number;
+  uploaded_on: string;
+  uploaded_time: string;
+  days_ago: number;
+  created_by_name: string;
+  type: DocumentType | null;
+  letter: string | null;
+  number: string | null;
+  supplier_name: string | null;
+  total: string | null;
 }
 
 /** A photo already in another document. */
@@ -137,6 +160,75 @@ export class UploadsService {
       });
       return { id, alreadyUploaded: false };
     });
+  }
+
+  /**
+   * *Subidas*: uploads that aren't deleted (D3), from the last 7 calendar
+   * days in Buenos Aires, plus every one still processing. The cutoff comes
+   * from `today()`, never SQL `now()`.
+   */
+  async list(scope: UploadScope, user: SessionUser): Promise<UploadList> {
+    const date = today();
+    const cutoff = addDays(date, -(LISTED_DAYS - 1));
+    const localCreatedAt = Prisma.sql`(d.created_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
+    const mine =
+      scope === 'mine'
+        ? Prisma.sql`AND d.created_by = ${user.id}::uuid`
+        : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<UploadListRow[]>`
+      SELECT d.id, d.review_status,
+             (SELECT count(*)::int FROM document_images i WHERE i.document_id = d.id) AS page_count,
+             to_char(${localCreatedAt}, 'YYYY-MM-DD') AS uploaded_on,
+             to_char(${localCreatedAt}, 'HH24:MI') AS uploaded_time,
+             ${date}::date - ${localCreatedAt}::date AS days_ago,
+             u.name AS created_by_name,
+             d.type, d.letter, d.number,
+             s.name AS supplier_name,
+             d.total::text AS total
+      FROM documents d
+      JOIN users u ON u.id = d.created_by
+      LEFT JOIN suppliers s ON s.id = d.supplier_id
+      WHERE d.source = 'upload'
+        AND d.deleted_at IS NULL
+        AND (d.review_status = 'processing' OR ${localCreatedAt}::date >= ${cutoff}::date)
+        ${mine}
+      ORDER BY d.created_at DESC, d.id DESC`;
+    return {
+      uploads: rows.map((row) => ({
+        id: row.id,
+        reviewStatus: row.review_status,
+        pageCount: row.page_count,
+        uploadedOn: row.uploaded_on,
+        uploadedTime: row.uploaded_time,
+        daysAgo: row.days_ago,
+        createdByName: row.created_by_name,
+        type: row.type,
+        letter: row.letter,
+        number: row.number,
+        supplierName: row.supplier_name,
+        total: row.total,
+      })),
+    };
+  }
+
+  /**
+   * The bytes as stored. Not found for a bad id, an unknown one, or an image
+   * of a deleted document (D3). A row whose file is missing throws: a 500.
+   */
+  async readImage(id: string): Promise<{ bytes: Buffer; mimeType: string }> {
+    if (!isUuid(id)) throw new NotFoundException();
+    const [row] = await this.prisma.$queryRaw<
+      { storage_key: string; mime_type: string }[]
+    >`
+      SELECT i.storage_key, i.mime_type
+      FROM document_images i
+      JOIN documents d ON d.id = i.document_id
+      WHERE i.id = ${id}::uuid AND d.deleted_at IS NULL`;
+    if (row === undefined) throw new NotFoundException();
+    return {
+      bytes: await this.store.read(row.storage_key),
+      mimeType: row.mime_type,
+    };
   }
 }
 
