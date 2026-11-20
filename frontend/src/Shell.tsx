@@ -2,12 +2,15 @@ import { Link, Navigate, Route, Routes } from 'react-router'
 import type { SessionUser } from './api'
 import AplicarCredito from './screens/AplicarCredito'
 import DocumentForm from './screens/DocumentForm'
+import Documento from './screens/Documento'
 import MarcarPagado from './screens/MarcarPagado'
 import PagoRegistrado from './screens/PagoRegistrado'
 import Pagos from './screens/Pagos'
 import Proveedor from './screens/Proveedor'
 import RegistrarPago from './screens/RegistrarPago'
 import Resumen from './screens/Resumen'
+import Subidas from './screens/Subidas'
+import Subir from './screens/Subir'
 import SupplierForm from './screens/SupplierForm'
 
 interface Props {
@@ -24,6 +27,8 @@ function Shell({ user, onSignOut }: Props) {
         </Link>
         <nav className="shell-nav">
           <Link to="/">Resumen</Link>
+          <Link to="/subir">Subir</Link>
+          <Link to="/subidas">Subidas</Link>
           <Link to="/pagos">Pagos</Link>
         </nav>
         <span className="user-name">{user.name}</span>
@@ -40,6 +45,9 @@ function Shell({ user, onSignOut }: Props) {
           <Route path="/proveedores/:id/cargar" element={<DocumentForm />} />
           <Route path="/proveedores/:id/aplicar-credito" element={<AplicarCredito />} />
           <Route path="/proveedores/:id/documentos/:documentId/marcar-pagado" element={<MarcarPagado />} />
+          <Route path="/subir" element={<Subir />} />
+          <Route path="/subidas" element={<Subidas />} />
+          <Route path="/documentos/:id" element={<Documento />} />
           <Route path="/pagos" element={<Pagos />} />
           <Route path="/pagos/nuevo" element={<RegistrarPago />} />
           <Route path="/pagos/:id" element={<PagoRegistrado />} />
