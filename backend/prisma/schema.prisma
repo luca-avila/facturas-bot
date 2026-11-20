@@ -108,10 +108,57 @@ model Document {
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  applicationsReceived Application[] @relation("ApplicationDocument")
-  applicationsGiven    Application[] @relation("ApplicationCreditNote")
+  applicationsReceived Application[]   @relation("ApplicationDocument")
+  applicationsGiven    Application[]   @relation("ApplicationCreditNote")
+  images               DocumentImage[]
+  extractionJobs       ExtractionJob[]
 
   @@map("documents")
+}
+
+/**
+ * Rows never change: no updated_at. The file at storage_key is written once
+ * and never changed (E5).
+ */
+model DocumentImage {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  position   Int
+  storageKey String   @unique @map("storage_key")
+  mimeType   String   @map("mime_type")
+  width      Int
+  height     Int
+  sizeBytes  Int      @map("size_bytes")
+  sha256     String   @db.Char(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([documentId, position])
+  @@index([sha256])
+  @@map("document_images")
+}
+
+enum ExtractionJobStatus {
+  queued
+  running
+  succeeded
+  failed
+
+  @@map("extraction_job_status")
+}
+
+model ExtractionJob {
+  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId String              @map("document_id") @db.Uuid
+  document   Document            @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  status     ExtractionJobStatus
+  attempts   Int
+  runAfter   DateTime            @map("run_after") @db.Timestamptz(6)
+  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([documentId])
+  @@map("extraction_jobs")
 }
 
 enum PaymentMethod {
