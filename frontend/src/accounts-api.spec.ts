@@ -3,8 +3,11 @@ import {
   applyCredit,
   createDocument,
   createPayment,
+  getDocument,
   getPayment,
+  imageUrl,
   listPayments,
+  listUploads,
   markPaid,
   previewSplit,
   createSupplier,
@@ -13,6 +16,7 @@ import {
   listSuppliers,
   onUnauthorized,
   updateSupplier,
+  uploadPhotos,
   type ApplyCreditInput,
   type DocumentInput,
   type MarkPaidInput,
@@ -116,6 +120,8 @@ describe('requests', () => {
     ['markPaid', () => markPaid(markPaidInput), '/api/payments/mark-paid', withJson('POST', markPaidInput)],
     ['listPayments', () => listPayments({ supplierId: id }), `/api/payments?supplierId=${id}`, { method: 'GET' }],
     ['getPayment', () => getPayment(id), `/api/payments/${id}`, { method: 'GET' }],
+    ['listUploads', () => listUploads('mine'), '/api/uploads?scope=mine', { method: 'GET' }],
+    ['getDocument', () => getDocument(id), `/api/documents/${id}`, { method: 'GET' }],
   ])('%s calls the right URL and method', async (_, call, url, init) => {
     const fetch = respond(200, {})
     await call()
@@ -249,5 +255,179 @@ describe('unauthorized', () => {
     await getSupplier(id)
     expect(handler).not.toHaveBeenCalled()
     unsubscribe()
+  })
+})
+
+describe('imageUrl', () => {
+  it('encodes the id', () => {
+    expect(imageUrl(id)).toBe(`/api/images/${id}`)
+    expect(imageUrl('a/../b')).toBe('/api/images/a%2F..%2Fb')
+  })
+})
+
+/** Records what `uploadPhotos` does, and lets a test answer like the browser would. */
+class FakeXhr extends EventTarget {
+  static last: FakeXhr | null = null
+  readonly upload = new EventTarget()
+  opened: [string, string] | null = null
+  headers: Record<string, string> = {}
+  body: FormData | null = null
+  aborted = false
+  status = 0
+  responseText = ''
+
+  constructor() {
+    super()
+    FakeXhr.last = this
+  }
+
+  open(method: string, url: string) {
+    this.opened = [method, url]
+  }
+
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value
+  }
+
+  send(body: FormData) {
+    this.body = body
+  }
+
+  abort() {
+    this.aborted = true
+    this.dispatchEvent(new Event('abort'))
+  }
+
+  respond(status: number, body?: unknown) {
+    this.status = status
+    this.responseText = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body)
+    this.dispatchEvent(new Event('load'))
+  }
+
+  progress(loaded: number, total: number, lengthComputable = true) {
+    this.upload.dispatchEvent(Object.assign(new Event('progress'), { loaded, total, lengthComputable }))
+  }
+}
+
+describe('uploadPhotos', () => {
+  const photos = [new Blob(['pagina uno'], { type: 'image/jpeg' }), new Blob(['pagina dos'], { type: 'image/jpeg' })]
+
+  function start(options?: Parameters<typeof uploadPhotos>[1]) {
+    vi.stubGlobal('XMLHttpRequest', FakeXhr)
+    FakeXhr.last = null
+    const result = uploadPhotos(photos, options)
+    const xhr = FakeXhr.last as FakeXhr | null
+    if (xhr === null) throw new Error('No request was made.')
+    return { result, xhr }
+  }
+
+  it('POSTs the photos in order to /api/uploads, with the header', async () => {
+    const { xhr } = start()
+    expect(xhr.opened).toEqual(['POST', '/api/uploads'])
+    expect(xhr.headers).toEqual({ 'X-Requested-With': 'XMLHttpRequest' })
+    const entries = xhr.body?.getAll('photos') ?? []
+    expect(entries.map((entry) => (entry as File).name)).toEqual(['pagina-1', 'pagina-2'])
+    expect(await Promise.all(entries.map((entry) => (entry as File).text()))).toEqual(['pagina uno', 'pagina dos'])
+    expect([...(xhr.body?.keys() ?? [])]).toEqual(['photos', 'photos'])
+  })
+
+  it('reports progress fractions, only when the length is known', () => {
+    const onProgress = vi.fn()
+    const { xhr } = start({ onProgress })
+    xhr.progress(25, 100)
+    xhr.progress(10, 100, false)
+    xhr.progress(100, 100)
+    expect(onProgress.mock.calls).toEqual([[0.25], [1]])
+  })
+
+  it.each([
+    [201, false],
+    [200, true],
+  ])('maps %i to alreadyUploaded %s', async (status, alreadyUploaded) => {
+    const { result, xhr } = start()
+    xhr.respond(status, { id, alreadyUploaded })
+    expect(await result).toEqual({ ok: true, id, alreadyUploaded })
+  })
+
+  it('gives unavailable when a 201 body is not what it should be', async () => {
+    const { result, xhr } = start()
+    xhr.respond(201, '<html>')
+    expect(await result).toEqual({ ok: false, error: 'unavailable' })
+  })
+
+  it('maps a 409 to page errors with their index and document', async () => {
+    const { result, xhr } = start()
+    xhr.respond(409, {
+      errors: [
+        { field: 'photos.1', code: 'photo_in_other_document', documentId: id },
+        { field: 'photos.12', code: 'photo_in_other_document', documentId: id },
+        { field: 'scope', code: 'photo_repeated' },
+      ],
+    })
+    expect(await result).toEqual({
+      ok: false,
+      error: 'rejected',
+      pageErrors: [
+        { page: 1, code: 'photo_in_other_document', documentId: id },
+        { page: 12, code: 'photo_in_other_document', documentId: id },
+      ],
+    })
+  })
+
+  it('maps a 400 page error with no document to a null documentId', async () => {
+    const { result, xhr } = start()
+    xhr.respond(400, { errors: [{ field: 'photos.0', code: 'photo_type_invalid' }] })
+    expect(await result).toEqual({
+      ok: false,
+      error: 'rejected',
+      pageErrors: [{ page: 0, code: 'photo_type_invalid', documentId: null }],
+    })
+  })
+
+  it.each([
+    ['an empty list', { errors: [] }],
+    ['a body without one', { message: 'Too many files', statusCode: 400 }],
+    ['a field that is no page', { errors: [{ field: 'xphotos.0', code: 'photo_repeated' }] }],
+    ['a field under a page', { errors: [{ field: 'photos.0.name', code: 'photo_repeated' }] }],
+  ])('gives no page errors on a 400 with %s', async (_, body) => {
+    const { result, xhr } = start()
+    xhr.respond(400, body)
+    expect(await result).toEqual({ ok: false, error: 'rejected', pageErrors: [] })
+  })
+
+  it('maps 413 to too_large', async () => {
+    const { result, xhr } = start()
+    xhr.respond(413)
+    expect(await result).toEqual({ ok: false, error: 'too_large' })
+  })
+
+  it('maps 401 to unauthorized, and calls the handler', async () => {
+    const handler = vi.fn()
+    const unsubscribe = onUnauthorized(handler)
+    const { result, xhr } = start()
+    xhr.respond(401)
+    expect(await result).toEqual({ ok: false, error: 'unauthorized' })
+    expect(handler).toHaveBeenCalledTimes(1)
+    unsubscribe()
+  })
+
+  it('maps another status to unavailable', async () => {
+    const { result, xhr } = start()
+    xhr.respond(502)
+    expect(await result).toEqual({ ok: false, error: 'unavailable' })
+  })
+
+  it('maps a network error to unavailable', async () => {
+    const { result, xhr } = start()
+    xhr.dispatchEvent(new Event('error'))
+    expect(await result).toEqual({ ok: false, error: 'unavailable' })
+  })
+
+  it('aborts the request when the signal aborts', async () => {
+    const controller = new AbortController()
+    const { result, xhr } = start({ signal: controller.signal })
+    controller.abort()
+    expect(xhr.aborted).toBe(true)
+    expect(await result).toEqual({ ok: false, error: 'aborted' })
   })
 })
