@@ -112,7 +112,7 @@ Fill in `.env`:
 | `ANTHROPIC_API_KEY` | Claude API key used for extraction   |
 | `LLM_MODEL`     | Model used for extraction (`claude-haiku-5-5`) |
 | `JWT_SECRET`    | Signs session cookies. At least 32 characters: generate one with `openssl rand -base64 48`. Changing it signs everyone out |
-| `UPLOAD_DIR`    | Where uploaded document images are stored |
+| `UPLOAD_DIR`    | Absolute path where uploaded photos are stored, outside the repo, such as `/home/you/facturas-uploads`. The backend creates it |
 | `RESTAURANT_CUIT` | The restaurant's CUIT, used to detect documents addressed to someone else |
 
 ### 2. Run with Docker

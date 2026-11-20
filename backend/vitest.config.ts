@@ -1,4 +1,6 @@
 import { randomBytes } from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import { loadRootEnv } from './src/env.js';
 import { testDatabaseUrl } from './test/test-database.js';
@@ -26,6 +28,11 @@ export default defineConfig({
       TZ: 'UTC',
       // A fresh secret per run, so no secret is ever written down.
       JWT_SECRET: randomBytes(32).toString('base64url'),
+      // A fresh directory per run, outside the repo.
+      UPLOAD_DIR: path.join(
+        os.tmpdir(),
+        `facturas-test-uploads-${randomBytes(6).toString('hex')}`,
+      ),
     },
   },
 });
