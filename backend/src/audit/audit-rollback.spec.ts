@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { createTestApp, createUser, signIn } from '../../test/app.js';
+import { jpeg, png, sha256 } from '../../test/photos.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
@@ -155,6 +156,45 @@ describe('a failing audit write rolls back the change', () => {
     expect(row.deletedAt).toBeNull();
     expect(await prisma.auditLog.count({ where: { entityId: id } })).toBe(0);
     expect(audit.entities).toEqual(['documents']);
+  });
+
+  it('uploading returns 500 and leaves no document, image or job, so the same photos are new after', async () => {
+    audit.failOn = 'documents';
+    const photos = [jpeg(), png()];
+    const upload = () => {
+      const req = http()
+        .post('/api/uploads')
+        .set('Cookie', `session=${session}`)
+        .set('X-Requested-With', 'XMLHttpRequest');
+      photos.forEach((bytes, i) => {
+        req.attach('photos', bytes, `pagina-${i + 1}`);
+      });
+      return req;
+    };
+    await upload().expect(500);
+    expect(
+      await prisma.document.count({
+        where: { createdById: userId, source: 'upload' },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.documentImage.count({
+        where: { sha256: { in: photos.map(sha256) } },
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.extractionJob.count({
+        where: { document: { createdById: userId } },
+      }),
+    ).toBe(0);
+    expect(audit.entities).toEqual(['documents']);
+
+    audit.failOn = null;
+    const res = await upload().expect(201);
+    expect(res.body).toEqual({
+      id: expect.any(String) as unknown,
+      alreadyUploaded: false,
+    });
   });
 
   /** A reviewed invoice of 100.00, written directly. */
