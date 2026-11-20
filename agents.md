@@ -22,6 +22,9 @@ Orientation for coding agents working in this repo.
 - `backend/src/documents/due-date.ts`: `resolveDueDate`, the only due-date rule (D4).
 - `frontend/src/labels.ts`: every Spanish label for an enum or error code, as exhaustive `Record`s.
 - `frontend/src/format.ts`: formats amounts as strings, never as numbers.
+- `backend/src/uploads/`: `UploadsService` is the only writer of `document_images` and `extraction_jobs`. It takes `ADVISORY_LOCKS.uploads` before the same-image check. `ImageStore` is the only code that touches `UPLOAD_DIR`, and it writes bytes as they arrive (E5).
+- `backend/src/common/advisory-locks.ts`: every advisory lock key.
+- `frontend/src/photos.ts`: the only place for compression settings, a one-way door.
 - `backend/src/auth/`: sessions, sign-in and the global `SessionGuard`. `backend/src/users/`: `UsersService` and `normalizeEmail`, used by auth and by the `user:*` scripts.
 - `backend/test/test-cuits.ts`: `TEST_CUITS`, invented CUITs. Every CUIT in a test or fixture must come from there: the CUIT check (part of backend `npm run lint`, and in CI) fails on any other valid one. It also fails on any file that isn't UTF-8 text, such as an image, a PDF, a spreadsheet or UTF-16, unless `UNSCANNED_FILES` in `backend/scripts/check-cuits.ts` lists it.
 - Backend tests run against a real Postgres. Start it first with `docker compose up -d db`. They need nothing else: `JWT_SECRET` comes from the Vitest config.
@@ -45,3 +48,7 @@ Orientation for coding agents working in this repo.
 - **Specs may write `applications` directly**, to build states the service would refuse. Production code outside `src/applications/` can't: ESLint fails on the delegate, the relation fields and raw `INSERT`, `UPDATE` or `DELETE`.
 - **Prisma fills `created_at` from the JS clock**, so rows created at one faked instant tie. When a test depends on creation order, move the clock between them, as `Ledger.tick()` in `backend/test/ledger.ts` does.
 - **`createTestApp` takes an override** on the `TestingModuleBuilder`, to replace a provider, such as `AuditService` with one that fails. `createUser` returns the new user's `id`, and `signIn` returns a session.
+- **Tests build photos with `backend/test/photos.ts`.** Never commit an image file: the CUIT check fails on binaries.
+- **Tests get `UPLOAD_DIR` from the Vitest config.** The backend won't start without it in `.env`.
+- **Uploads in a spec file that checks files on disk use their own `UPLOAD_DIR`**, through `vi.stubEnv` before `createTestApp()`.
+- **The phone reaches the dev server over plain HTTP, which isn't a secure context.** `crypto.randomUUID`, `crypto.subtle` and `getUserMedia` don't exist there.
