@@ -84,13 +84,15 @@ export class UploadsService {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCKS.uploads})`;
 
       // Oldest document first, so a hash somehow in two keeps the oldest.
+      // `bpchar[]`, the column's type: against `text[]` the column is cast,
+      // and `document_images_sha256_idx` can't serve the lookup.
       const rows = await tx.$queryRaw<
         { sha256: string; document_id: string }[]
       >`
         SELECT i.sha256, i.document_id
         FROM document_images i
         JOIN documents d ON d.id = i.document_id
-        WHERE d.deleted_at IS NULL AND i.sha256 = ANY(${hashes}::text[])
+        WHERE d.deleted_at IS NULL AND i.sha256 = ANY(${hashes}::bpchar[])
         ORDER BY d.created_at, d.id`;
       const documentOf = new Map<string, string>();
       for (const row of rows) {
