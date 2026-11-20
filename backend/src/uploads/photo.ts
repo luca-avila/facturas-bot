@@ -48,7 +48,11 @@ export function inspectPhoto(bytes: Buffer): Photo | null {
     return null;
   }
   // Orientations 5 to 8 turn the image a quarter, so the header's sizes swap.
-  const turned = size.orientation !== undefined && size.orientation >= 5;
+  // `image-size` reports the raw value, and browsers ignore one outside 1 to 8.
+  const turned =
+    size.orientation !== undefined &&
+    size.orientation >= 5 &&
+    size.orientation <= 8;
   return {
     mimeType: TYPES[type],
     extension: type,

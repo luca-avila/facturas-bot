@@ -30,9 +30,12 @@ describe('inspectPhoto', () => {
     expect(photo).toMatchObject({ width: 1650, height: 2200 });
   });
 
-  it('keeps the sizes for orientation 1', () => {
+  it.each([
+    ['orientation 1', 1],
+    ['orientation 9, which isn’t one', 9],
+  ])('keeps the sizes for %s', (_, orientation) => {
     const photo = inspectPhoto(
-      jpeg({ width: 2200, height: 1650, orientation: 1 }),
+      jpeg({ width: 2200, height: 1650, orientation }),
     );
     expect(photo).toMatchObject({ width: 2200, height: 1650 });
   });
