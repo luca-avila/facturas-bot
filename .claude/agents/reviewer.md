@@ -30,12 +30,40 @@ Read the code around the diff when you need it to understand the change, but onl
 - For each fix, add a line to `memory.md` using the format that file specifies.
 
 ## When you finish
-Return this section, to paste at the end of the PR:
+Write the report below to `plans/<slug>.review.md` (same slug as the plan), commit it as `review: report`, and return it verbatim. It goes at the end of the PR.
+
+The reader is the owner of the app, who will decide whether to merge without opening the code. Write so they understand what the change does and why, not only where it is.
+
+Rules for the report:
+- **Behavior first, code second.** Start each point with what someone using the app sees or what happens to the data. Put file and function names at the end, as a reference.
+- **Explain every technical term the first time it appears**, in a few words (e.g. "an index on sha256, so looking up duplicates is fast").
+- **Describe what the code does, not what the plan says.** If they differ, add it to Open questions.
+- **Keep it to 40–60 lines.** Cut detail before cutting explanation.
+- Write the report in Spanish. Keep code identifiers as they are.
 
 ```
+## Qué hace este cambio
+Antes: how it worked for someone using the app
+Ahora: what changed, in terms of screens, data or behavior
+
+## Cómo funciona
+The end-to-end path, in 4 to 8 numbered steps. Each step says what happens
+and why, then where: `function` (path/file).
+
+## Decisiones que tomó el código
+- decision: why this way, and what the alternative would have been
+
+## Qué prueban los tests
+- one line per behavior covered
+- Sin cubrir: what isn't tested, and whether it matters
+
+## Cómo probarlo a mano
+1. Concrete steps in the app to see the change working
+
 ## Merge danger
-- Door: two-way / one-way
-- Blast radius: what breaks and who is affected if this fails
-- Look closely at: key files or functions (one-way doors only)
-- Open questions: the doubts you didn't fix
+- Door: two-way / one-way, and why in one sentence
+- Blast radius: a concrete scenario of what breaks and who notices
+  (e.g. "if it fails, the same invoice loads twice and debt is overstated")
+- Look closely at: each file or function, with one line on what to check and why (one-way doors only)
+- Open questions: each doubt with enough context to decide without opening the code
 ```

@@ -52,7 +52,6 @@ Run the checks again.
 ### 6. Hand-off
 Don't push or merge. Give the user:
 - The branch name
-- A 3–5 line summary of what changed, based on the plan's goal and the commit log
-- The reviewer's merge danger section, verbatim
+- The reviewer's report, verbatim (it explains what changed and ends with the merge danger section), and the path `plans/<slug>.review.md`
 - Out-of-scope issues the implementer reported
 - If the door is one-way, a reminder that it needs a thorough human review before merging
