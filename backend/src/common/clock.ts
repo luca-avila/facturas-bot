@@ -3,7 +3,8 @@
  * `Date()` and `Date.now()` everywhere else.
  */
 
-const BUSINESS_TIME_ZONE = 'America/Argentina/Buenos_Aires';
+/** Pass it to SQL as `${BUSINESS_TIME_ZONE}::text`, never as a literal. */
+export const BUSINESS_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 
 const dateFormat = new Intl.DateTimeFormat('en-US', {
   timeZone: BUSINESS_TIME_ZONE,

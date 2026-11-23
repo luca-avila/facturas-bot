@@ -150,14 +150,19 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - Now:
   - The browser compresses each photo: long side up to 2200 px, JPEG quality around 0.85, EXIF orientation applied, and no other filters. If compression fails, the original is uploaded when it's a JPEG, PNG or WebP under 7 MB. Anything else, HEIC included, gets a Spanish message.
   - The server checks type and size again. It stores the bytes untouched (E5), under a random key in `UPLOAD_DIR`. Then one transaction creates the document, its images and its job.
-  - A `sha256` the database already has returns the existing document and creates nothing ([question 6](#open-questions)).
+  - Same image ([question 6](#open-questions)). Photos are compared by `sha256` with the images of documents that aren't deleted, in any status.
+    - If every photo is already in one document, even only some of its pages or in another order, the upload returns that document and creates nothing.
+    - Any other match refuses the whole upload, and each matching page names the document that has it. That covers some photos matching and others not, and photos from two documents. Nothing is written, so no image ever belongs to two documents and no page is dropped silently.
+    - The same photo twice in one upload is refused on that page.
+    - A photo whose only document is deleted creates a new document, so deleting can be undone by uploading again.
+    - The server hashes the bytes it receives, which are the bytes it stores. The upload transaction takes one `pg_advisory_xact_lock` that every upload shares, then checks again before inserting (C1), so a retry that arrives while the first request is still running can't create a second document. A unique index on `sha256` can't do this, because a deleted document's hash can come back.
   - Images are only served through an authenticated endpoint.
   - *Subidas* lists what was uploaded in the last 7 days, newest first, with *Mías* and *Todas*. A *Procesando* document stays listed however old it is.
 - Later: the worker, in slice 5.
 
 **Acceptance.**
 1. On the local network, use the phone to photograph a printed two-page document with invented data. *Documento* shows both pages in order, *Procesando*, and *Subido por* with my name.
-2. Upload the same file again. It opens the same document, and the database still has only one.
+2. Upload the same file again. It opens the same document, and the database still has only one. Upload its first page together with a new photo. The upload is refused with a Spanish message on that page, and nothing is created.
 3. Opening the image URL in a private window returns 401.
 4. A HEIC file on a desktop browser, or an oversized file, gets the Spanish message.
 5. *Resumen* doesn't change.
@@ -165,7 +170,11 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 **Tests.**
 - The upload transaction is all or nothing.
-- A known `sha256` returns the existing id and writes nothing.
+- Photos that are all in one document, all of its pages or some, in any order, return its id and write nothing.
+- A partial match, or photos from two documents, is refused with a 409 and writes nothing.
+- The same photo twice in one upload is refused.
+- A photo whose only document is deleted creates a new document.
+- Two identical uploads at the same time leave one document.
 - Served bytes have the same hash as the uploaded ones.
 - The image endpoint refuses requests without a session.
 - Rejected types and sizes.
@@ -381,7 +390,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
    - Answered: invariant 6 protects both sides of an application. A credit note or a payment that has given credit can't be deleted or change supplier, and can't drop below what it gave. Editing and deleting payments and removing applications stay open.
 4. **Applying existing credit** (slice 3). Answered: from the *Crédito a favor* card in *Proveedor*, with the same split as *Pagos*.
 5. ***Total* when there's credit** (slice 2). Answered: *Total* is the balance after credit, and *Resumen* gets a *Crédito* column so the row adds up.
-6. **Edge cases of the same-image check** (slice 4, one-way). If a `sha256` belongs to a discarded document, does the upload still return that document? What happens when only some of the photos in an upload match?
+6. **Edge cases of the same-image check** (slice 4, one-way). Answered: only documents that aren't deleted count, so a photo whose document was deleted can be uploaded again, and deleting can be undone. An upload whose photos are all in one document returns that document. Any other match refuses the whole upload, naming the document on each matching page. A shared advisory lock, not a unique index, keeps two uploads at the same time from both passing the check.
 7. **Where *Procesando* documents are listed** (slice 4). Answered: in *Subidas*, a new screen with the last 7 days of uploads, where *Procesando* documents stay however old.
 8. **Editing lines and taxes** (slice 6). Answered: only the header fields can be edited, and mismatches are accepted instead.
 9. **`wrong_recipient` with no recipient CUIT** (slice 7). Is that an issue, or is the check skipped?

@@ -655,3 +655,183 @@ input.split-amount[aria-invalid='true'] {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Review status badges */
+.badge.review-processing,
+.badge.review-unreviewed {
+  color: var(--pending);
+  background: var(--pending-bg);
+}
+
+.badge.review-error {
+  color: var(--overdue);
+  background: var(--overdue-bg);
+}
+
+.badge.review-reviewed {
+  color: var(--paid);
+  background: var(--paid-bg);
+}
+
+.row-main .badge {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+
+/* Subir: the page list */
+.upload-page {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.upload-page-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.thumb {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.upload-page-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-h);
+}
+
+.upload-page-actions {
+  display: flex;
+  gap: 4px;
+}
+
+button.icon {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+}
+
+.pair-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.pair-buttons button.secondary {
+  flex: 1;
+  padding: 12px;
+}
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.photo-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg);
+  overflow: auto;
+}
+
+.photo-viewer img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Documento */
+.document-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.document-heading h1 {
+  margin: 0;
+}
+
+.callout {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--accent-bg);
+}
+
+.document-pages {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+
+.document-page {
+  flex: 0 0 100%;
+  margin: 0;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.document-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+}
+
+/* Four header links don't fit next to the name at phone width: they get a row of their own. */
+.shell-header {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.shell-header .shell-nav {
+  order: 1;
+  flex: 1 0 100%;
+}

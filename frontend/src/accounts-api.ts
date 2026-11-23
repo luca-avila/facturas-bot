@@ -35,6 +35,9 @@ export type FieldErrorCode =
   | 'not_applicable'
   | 'remaining_changed'
   | 'document_has_applications'
+  | 'photo_type_invalid'
+  | 'photo_repeated'
+  | 'photo_in_other_document'
 
 export interface FieldError {
   field: string
@@ -227,6 +230,60 @@ export interface DocumentInput {
   notes: string | null
 }
 
+export type UploadScope = 'mine' | 'all'
+
+export interface UploadRow {
+  id: string
+  reviewStatus: ReviewStatus
+  pageCount: number
+  /** YYYY-MM-DD and HH:MM in Buenos Aires. */
+  uploadedOn: string
+  uploadedTime: string
+  /** Today minus uploadedOn, in Buenos Aires: 0 today, 1 yesterday. */
+  daysAgo: number
+  createdByName: string
+  type: DocumentType | null
+  letter: string | null
+  number: string | null
+  supplierName: string | null
+  /** Canonical, such as "53600.00". */
+  total: string | null
+}
+
+export interface UploadList {
+  /** Newest first. */
+  uploads: UploadRow[]
+}
+
+export interface DocumentDetail {
+  id: string
+  source: DocumentSource
+  reviewStatus: ReviewStatus
+  type: DocumentType | null
+  letter: string | null
+  number: string | null
+  createdByName: string
+  /** YYYY-MM-DD and HH:MM in Buenos Aires. */
+  createdOn: string
+  createdTime: string
+  /** By position. Empty for a manual document. */
+  images: { id: string; position: number }[]
+}
+
+/** A field error on one photo of an upload. */
+export interface PageError {
+  /** 0-based, in the order the photos were sent. */
+  page: number
+  code: FieldErrorCode
+  /** The document that already has the photo, for `photo_in_other_document`. */
+  documentId: string | null
+}
+
+export type UploadResult =
+  | { ok: true; id: string; alreadyUploaded: boolean }
+  | { ok: false; error: 'unavailable' | 'unauthorized' | 'too_large' | 'aborted' }
+  | { ok: false; error: 'rejected'; pageErrors: PageError[] }
+
 export type ApiResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: 'unavailable' | 'not_found' | 'unauthorized' }
@@ -240,6 +297,10 @@ export function onUnauthorized(handler: () => void): () => void {
   return () => {
     unauthorizedHandlers.delete(handler)
   }
+}
+
+function notifyUnauthorized(): void {
+  for (const handler of [...unauthorizedHandlers]) handler()
 }
 
 function fieldErrors(body: unknown): FieldError[] {
@@ -281,7 +342,7 @@ async function call<T>(
     case 404:
       return { ok: false, error: 'not_found' }
     case 401:
-      for (const handler of [...unauthorizedHandlers]) handler()
+      notifyUnauthorized()
       return { ok: false, error: 'unauthorized' }
     default:
       return { ok: false, error: 'unavailable' }
@@ -344,4 +405,115 @@ export function listPayments(params: { supplierId: string | null }): Promise<Api
 
 export function getPayment(id: string): Promise<ApiResult<PaymentDetail>> {
   return call(`/api/payments/${encodeURIComponent(id)}`, { method: 'GET' }, json<PaymentDetail>)
+}
+
+export function listUploads(scope: UploadScope): Promise<ApiResult<UploadList>> {
+  return call(`/api/uploads?${new URLSearchParams({ scope }).toString()}`, { method: 'GET' }, json<UploadList>)
+}
+
+export function getDocument(id: string): Promise<ApiResult<DocumentDetail>> {
+  return call(`/api/documents/${encodeURIComponent(id)}`, { method: 'GET' }, json<DocumentDetail>)
+}
+
+/** Where an image is served, only with a session. */
+export function imageUrl(id: string): string {
+  return `/api/images/${encodeURIComponent(id)}`
+}
+
+const PAGE_FIELD = /^photos\.(\d+)$/
+
+function pageErrors(body: unknown): PageError[] {
+  if (typeof body !== 'object' || body === null) return []
+  const { errors } = body as { errors?: unknown }
+  if (!Array.isArray(errors)) return []
+  return errors.flatMap((error: unknown): PageError[] => {
+    if (typeof error !== 'object' || error === null) return []
+    const { field, code, documentId } = error as Record<string, unknown>
+    const match = typeof field === 'string' ? PAGE_FIELD.exec(field) : null
+    if (match === null || typeof code !== 'string') return []
+    return [
+      {
+        page: Number(match[1]),
+        code: code as FieldErrorCode,
+        documentId: typeof documentId === 'string' ? documentId : null,
+      },
+    ]
+  })
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return null
+  }
+}
+
+function uploadResult(xhr: XMLHttpRequest): UploadResult {
+  switch (xhr.status) {
+    case 200:
+    case 201: {
+      const body = parseJson(xhr.responseText)
+      if (typeof body !== 'object' || body === null) return { ok: false, error: 'unavailable' }
+      const { id, alreadyUploaded } = body as Record<string, unknown>
+      if (typeof id !== 'string' || typeof alreadyUploaded !== 'boolean') return { ok: false, error: 'unavailable' }
+      return { ok: true, id, alreadyUploaded }
+    }
+    case 400:
+    case 409:
+      return { ok: false, error: 'rejected', pageErrors: pageErrors(parseJson(xhr.responseText)) }
+    case 413:
+      return { ok: false, error: 'too_large' }
+    case 401:
+      notifyUnauthorized()
+      return { ok: false, error: 'unauthorized' }
+    default:
+      return { ok: false, error: 'unavailable' }
+  }
+}
+
+/**
+ * Sends the photos in page order. `XMLHttpRequest`, since `fetch` can't
+ * report upload progress. Sending the same blobs again is safe: the backend
+ * answers with the document that already has them.
+ */
+export function uploadPhotos(
+  photos: Blob[],
+  options: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<UploadResult> {
+  const { onProgress, signal } = options
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve({ ok: false, error: 'aborted' })
+      return
+    }
+    const xhr = new XMLHttpRequest()
+    const form = new FormData()
+    photos.forEach((photo, i) => {
+      form.append('photos', photo, `pagina-${i + 1}`)
+    })
+    const abort = () => {
+      xhr.abort()
+    }
+    const settle = (result: UploadResult) => {
+      signal?.removeEventListener('abort', abort)
+      resolve(result)
+    }
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total)
+    })
+    xhr.addEventListener('load', () => {
+      settle(uploadResult(xhr))
+    })
+    xhr.addEventListener('error', () => {
+      settle({ ok: false, error: 'unavailable' })
+    })
+    xhr.addEventListener('abort', () => {
+      settle({ ok: false, error: 'aborted' })
+    })
+    signal?.addEventListener('abort', abort)
+    xhr.open('POST', '/api/uploads')
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest')
+    xhr.send(form)
+  })
 }

@@ -271,11 +271,12 @@ This rule also removes the riskiest misread in the pipeline. A CAE expiry mistak
 
 ## Extraction
 
-**Capture.** Compress in the browser with a library such as `browser-image-compression`:
+**Capture.** Compress in the browser with a canvas, in one pass:
 
 - Long side up to 2200 px, JPEG quality around 0.85. Haiku 5.5 reads up to 2,576 px and 4,784 visual tokens and downscales anything larger. On a 3:4 phone photo the token limit comes first: 2200 px fits, and 2400 px would be shrunk again by the API.
-- Apply EXIF orientation. No grayscale, thresholding or sharpening.
+- Apply EXIF orientation, which the browser does when it decodes the photo. No grayscale, thresholding or sharpening.
 - If compression fails, upload the original when it's JPEG, PNG or WebP and under 7 MB. Otherwise, reject it with a clear message. The API takes up to 10 MB per image after base64 encoding, and it doesn't accept HEIC.
+- Not `browser-image-compression`: by default it runs in a web worker that loads the library from a CDN, and when its result is larger than the original it lowers the quality again, up to ten times, with no way to turn that off.
 
 **Upload.** One document can take several photos. Files are written to `UPLOAD_DIR`, then one transaction creates the document, its images and its job. Images are served through an authenticated endpoint, never as public static files. The server stores and sends the bytes as they arrive, because each extra lossy pass hurts legibility.
 
@@ -322,7 +323,7 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 
 ### Duplicates
 
-1. **Same image.** At upload, a `sha256` that already exists returns the existing document and creates nothing. This also makes retries on a bad connection safe.
+1. **Same image.** At upload, photos are compared by `sha256` with the images of documents that aren't deleted. If every photo is already in one document, the upload returns it and creates nothing, which also makes retries on a bad connection safe. Any other match refuses the whole upload, so no image belongs to two documents. A photo whose document was deleted can be uploaded again.
 2. **Same number.** Same supplier, type, letter and `number_normalized`: `duplicate_number`.
 3. **Same purchase, no number.** Same supplier, `issue_date` and `total`, with at least one of the two documents lacking a number: `duplicate_suspected`. This also catches a delivery note and its invoice if both get uploaded with the same date and total. It misses an invoice dated later, or one that bills several delivery notes.
 
@@ -348,6 +349,8 @@ Where the wireframes differ from this file on purpose:
 - **Filters (3d, 7a):** no filter by type and no date ranges.
 - **Applying credit (7h):** the only entry point is the *Crédito a favor* card. The other two can come later.
 - **Subidas (4g):** *Procesando* documents stay listed after 7 days.
+- **Subir (4a, 4b, 4f):** a button opens the phone's own camera, since a camera view inside the page needs HTTPS. Pages move with ↑ and ↓ instead of dragging. An upload that was already there opens its document with a notice, instead of a screen of its own.
+- **Subidas (4g):** rows have no thumbnail. The server never makes smaller copies (E5), and loading every full photo would spend the phone's data.
 
 ## Operations
 

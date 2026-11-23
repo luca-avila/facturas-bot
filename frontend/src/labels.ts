@@ -10,6 +10,7 @@ import type {
   PaymentMethod,
   ReviewStatus,
   SupplierSort,
+  UploadScope,
 } from './accounts-api'
 import type { PaymentFilter } from './payment-filter'
 
@@ -92,7 +93,24 @@ export const FIELD_ERROR_MESSAGES: Record<FieldErrorCode, string> = {
   not_applicable: 'Este documento o este crédito ya no se puede usar. Volvé a abrir el reparto.',
   remaining_changed: 'Lo que falta pagar cambió mientras tanto. Volvé a abrir el documento.',
   document_has_applications: 'No se puede descartar: tiene pagos o créditos aplicados.',
+  photo_type_invalid: 'Este formato no se puede subir. Sacá la foto desde la app o elegí JPG/PNG.',
+  photo_repeated: 'Esta foto ya está en otra página de este documento.',
+  photo_in_other_document: 'Esta foto ya está en otro documento.',
 }
+
+export const UPLOAD_SCOPE_LABELS: Record<UploadScope, string> = {
+  mine: 'Mías',
+  all: 'Todas',
+}
+
+/** A photo the browser couldn't compress and the backend wouldn't take as is. */
+export function photoFormatMessage(format: string | null): string {
+  const named = format === null ? '' : ` (${format})`
+  return `Este formato no se puede subir${named}. Sacá la foto desde la app o elegí JPG/PNG.`
+}
+
+export const PHOTO_TOO_LARGE_MESSAGE = 'La imagen es demasiado grande.'
+export const UPLOAD_FAILED_MESSAGE = 'No se pudo subir. Volvé a intentar.'
 
 export const REJECTED_WITHOUT_FIELDS_MESSAGE = 'No se pudo guardar. Revisá los datos y volvé a intentar.'
 export const UNAVAILABLE_MESSAGE = 'No se pudo conectar con el servidor. Volvé a intentar.'

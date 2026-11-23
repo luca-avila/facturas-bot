@@ -72,3 +72,8 @@ export function documentTitle(doc: { type: DocumentType; letter: string | null; 
   if (doc.type === 'opening_balance') return DOCUMENT_TYPE_LABELS.opening_balance
   return [DOCUMENT_TYPE_LABELS[doc.type], doc.letter, doc.number ?? 's/n'].filter((part) => part !== null).join(' ')
 }
+
+/** 1 → "1 página", 2 → "2 páginas". */
+export function formatPageCount(n: number): string {
+  return n === 1 ? '1 página' : `${n} páginas`
+}

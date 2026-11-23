@@ -23,7 +23,10 @@ export type FieldErrorCode =
   | 'nothing_to_apply'
   | 'not_applicable'
   | 'remaining_changed'
-  | 'document_has_applications';
+  | 'document_has_applications'
+  | 'photo_type_invalid'
+  | 'photo_repeated'
+  | 'photo_in_other_document';
 
 export interface FieldError {
   field: string;

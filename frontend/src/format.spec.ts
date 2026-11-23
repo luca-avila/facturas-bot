@@ -7,6 +7,7 @@ import {
   formatAmountInput,
   formatDueIn,
   formatMoney,
+  formatPageCount,
   parseAmountInput,
 } from './format'
 
@@ -119,5 +120,14 @@ describe('documentTitle', () => {
     expect(documentTitle({ type: 'credit_note', letter: 'B', number: '0001-00000042' })).toBe(
       'Nota de crédito B 0001-00000042',
     )
+  })
+})
+
+describe('formatPageCount', () => {
+  it.each([
+    [1, '1 página'],
+    [2, '2 páginas'],
+  ])('formats %i as %j', (n, expected) => {
+    expect(formatPageCount(n)).toBe(expected)
   })
 })
