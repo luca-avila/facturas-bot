@@ -23,7 +23,8 @@
     "check:cuits": "tsx scripts/check-cuits.ts",
     "user:create": "tsx scripts/users.ts create",
     "user:reset-password": "tsx scripts/users.ts reset-password",
-    "user:disable": "tsx scripts/users.ts disable"
+    "user:disable": "tsx scripts/users.ts disable",
+    "extraction:test": "tsx scripts/extraction-test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.8.0",
