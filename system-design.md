@@ -295,7 +295,7 @@ Estimated cost is about US$0.002 per document, or about US$3 a year at current v
 
 **Learning from corrections.** Comparing `extraction_jobs.raw_output` with the final data of `reviewed` documents gives a free evaluation dataset, tied to `model` and `prompt_version`.
 
-**Test before building.** Run the samples through Haiku at each effort level and compare against hand-labeled values. Compare compressed against original photos too, once uncompressed ones are available.
+**Test before building.** Run the samples through Haiku at each effort level and compare against hand-labeled values. Samples without labels are judged by the deterministic checks in [Validation](#validation). Compare compressed against original photos too, once uncompressed ones are available.
 
 ## Validation
 
@@ -305,7 +305,7 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 | --- | --- | --- |
 | `extraction_failed` | The LLM failed after every retry, or returned unusable output | No, retry or type it in |
 | `unsupported_document` | Not an invoice, delivery note or credit note | No, discard it |
-| `supplier_unresolved` | CUIT missing or fails its check digit | No, choose the supplier |
+| `supplier_unresolved` | CUIT missing, fails its check digit or is `RESTAURANT_CUIT`, or a new CUIT has no legible name | No, choose the supplier |
 | `missing_total` | No total | No |
 | `missing_issue_date` | No issue date | No |
 | `supplier_term_missing` | Invoice or delivery note from a supplier with no term, see [Due dates](#due-dates) | No, set the term |
@@ -317,7 +317,7 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 
 - Amount comparisons tolerate $1. The sums on all four invoices are exact, so this only leaves room for other suppliers' rounding, without hiding real misreads.
 - `totals_mismatch` is skipped when the document has no tax breakdown, and `lines_mismatch` when it has no lines.
-- A valid new CUIT creates the supplier automatically, using the printed name for both `name` and `legal_name`.
+- A valid new CUIT creates the supplier automatically, using the printed name for both `name` and `legal_name`. The check digit catches any single misread digit, so a valid but wrong CUIT most likely belongs to someone else on the page, usually the restaurant. That's why the restaurant's own CUIT never resolves a supplier. A new supplier has no term, so its first invoice or delivery note always stops in *Error*, where a person sees it.
 - Suppliers created by hand need their CUIT, unless they're informal. Without it, their first document would create a second supplier.
 - `base × rate = tax` is deliberately not checked: real invoices differ from it by up to 19 cents.
 

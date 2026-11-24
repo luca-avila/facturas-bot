@@ -189,7 +189,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 **Goal.** The worker reads each upload with Haiku. It leaves the document in *Sin revisar*, where it counts as debt, or in *Error*, with the reason in Spanish.
 
-**Gate.** Run the [extraction test](../system-design.md#extraction) first. It runs the samples at each effort level and compares them against hand-labeled values, all kept in the gitignored `samples/`. It sets `output_config.effort`, confirms the 2200 px and measures cost from `usage`.
+**Gate.** Run the [extraction test](../system-design.md#extraction) first. It runs the five samples at each effort level, all kept in the gitignored `samples/`. Only `factura-a-01` is hand-labeled, in `samples/labels.json`. It's compared field by field, including that the CAE expiry isn't read as `printedDueDate`. The other four are judged by this slice's own checks: the CUIT check digit, subtotal plus taxes against the total, and lines against the subtotal or total. Their dates and numbers get checked by hand once the app shows them next to the photo. It sets `output_config.effort` and measures cost from `usage`. It also confirms the 2200 px. The samples are 900×1600, so it shows that Haiku reads them at that size, and from `usage` that a 2200 px image stays under the token limit. Comparing compressed and original photos waits until there are originals.
 
 **Design.**
 - [Decisions 3, 4 and 8](../system-design.md#decisions)
@@ -208,8 +208,8 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
   - **Worker.** It claims jobs with `FOR UPDATE SKIP LOCKED` and holds a lease. It retries three times with backoff, with `maxRetries: 0` in the SDK. An attempt fails on `max_tokens`, on `refusal` or when `parsed_output` is null.
   - **Call.** `messages.parse` with a Zod schema and the images before the text. The model comes from `LLM_MODEL`, effort is set explicitly, `max_tokens` is around 16,000, and no sampling parameters are sent.
   - **E1–E4.** No LLM call runs inside a transaction. `raw_output` is written once, and `prompt_version` is set. The result is written in one transaction that replaces the lines and taxes, and only if the document is still `processing`.
-  - **Schema extras.** The Zod schema also asks for what the tables don't hold: the supplier's CUIT and printed name, the recipient's CUIT, any printed payment term (for slice 6's suggestion), and whether the photo is a document at all.
-  - **Supplier.** A valid CUIT that isn't in the database creates the supplier, using the printed name. An invalid or missing one gives `supplier_unresolved`. `due_date` only comes from slice 2's function.
+  - **Schema extras.** The Zod schema also asks for what the tables don't hold: the supplier's CUIT and printed name, the recipient's CUIT, any printed payment term, in days or as a payment date (for slice 6's suggestion, never for `due_date`), and whether the photo is a document at all.
+  - **Supplier.** A valid CUIT that isn't in the database creates the supplier, using the printed name. An invalid or missing one gives `supplier_unresolved`. So does the restaurant's own CUIT, from `RESTAURANT_CUIT`, which arrives here instead of in slice 7, and a new CUIT with no legible printed name ([question 14](#open-questions)). `due_date` only comes from slice 2's function.
   - **Checks (V1).** `extraction_failed`, `unsupported_document`, `supplier_unresolved`, `missing_total`, `missing_issue_date`, `supplier_term_missing` and `duplicate_number`. `duplicate_number` compares against the same set of documents as invariant 7. A unique-index violation on write also becomes `duplicate_number`. `uniqueViolationIndex` only recognizes `P2002`, which Prisma's model API throws. A raw query (`$executeRaw`, `$queryRaw`) throws `P2010` for the same violation, so the worker writes documents through the model API, or extends the helper first and tests it with a real violation.
   - **Screens.** *A resolver* is read-only, *Resumen* warns about *Error* documents, and *Documento* shows the data next to the image.
   - **Audit.** The worker's `audit_log` entries have no `user_id`.
@@ -221,9 +221,11 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 3. A photo that isn't a document gives `unsupported_document`.
 4. With a bad API key, the document ends in `extraction_failed` after the retries, and `last_error` is saved.
 5. Kill the worker mid-job. Once the lease expires, the job runs again, and only one result is written.
+6. Set `RESTAURANT_CUIT` locally to a supplier's test CUIT and upload one of their documents. It gives `supplier_unresolved`.
 
 **Tests.**
 - Mapping from invented LLM outputs, with the SDK client mocked.
+- The restaurant's own CUIT, or a new CUIT with no printed name, gives `supplier_unresolved` and creates no supplier.
 - A passing and a failing case for each code.
 - A printed due date or CAE expiry never reaches `due_date`.
 - A duplicate number that only the unique index catches, through the worker's own write, ends as `duplicate_number`, not as a failed attempt.
@@ -298,7 +300,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - Rule 3 in [Duplicates](../system-design.md#duplicates)
 - [Decision 1](../system-design.md#decisions)
 
-**Schema.** None. Accepted issues stay in `issues`, and `RESTAURANT_CUIT` comes from the environment.
+**Schema.** None. Accepted issues stay in `issues`, and `RESTAURANT_CUIT` already comes from the environment, since slice 5.
 
 **Rules.**
 - Now:
@@ -403,6 +405,8 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 13. **Opening balances** (slices 2 and 3).
     - Answered: "up to two per supplier" is how they're meant to be used, not a rule. Nothing enforces it: a unique index can't tell the overdue one from the one that isn't, since only their due dates differ, and they're typed in once, at the start.
     - Answered: documents with no due date take their issue date's place in the oldest-due-first suggestion, by `COALESCE(due_date, issue_date)`, and *Proveedor* lists them in the same order. Put last, an opening balance without a due date would never be suggested while newer invoices keep arriving, and since it never becomes overdue, nothing would flag it.
-14. **Suppliers created from a misread CUIT** (slice 5). A CUIT that's valid but wrong creates a supplier that can't be deleted or merged, and it stays in *Resumen*. Is that acceptable for the MVP?
+14. **Suppliers created from a misread CUIT** (slice 5). A CUIT that's valid but wrong creates a supplier that can't be deleted or merged, and it stays in *Resumen*.
+    - Answered: acceptable for the MVP, with two guards. The check digit catches any single misread digit, so a valid but wrong CUIT most likely comes from reading another CUIT on the page, usually the restaurant's. A supplier CUIT equal to `RESTAURANT_CUIT` gives `supplier_unresolved`, and so does a new CUIT with no legible printed name, so the worker never makes up a name.
+    - Answered: the risk is a leftover row, not hidden debt. A new supplier has no term, so its first invoice or delivery note stops in *Error*, where a person sees it. Only a credit note can land on a wrong supplier unseen. If leftover suppliers show up, deleting one with no documents or payments is a small addition.
 15. **Session length** (slice 1b). Answered: a session expires after 30 days without use, and each request renews it.
 16. **Where backups go** (slice 8). The storage outside the VPS isn't chosen yet, and sending backups there is data leaving the system. Where should they go?
