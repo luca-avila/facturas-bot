@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createTestApp } from '../../test/app.js';
@@ -23,6 +29,45 @@ describe('startup', () => {
     await expect(createTestApp()).rejects.toThrow(
       /UPLOAD_DIR must be set to an absolute path/,
     );
+  });
+
+  const repoRoot = path.resolve(import.meta.dirname, '../../..');
+
+  it.each([
+    ['the repo itself', repoRoot],
+    [
+      'a folder the Vite dev server serves',
+      path.join(repoRoot, 'frontend', 'public', 'uploads'),
+    ],
+    [
+      'a path that climbs back into the repo',
+      path.join(
+        parent,
+        '..',
+        path.relative(path.dirname(parent), repoRoot),
+        'uploads',
+      ),
+    ],
+  ])('refuses an UPLOAD_DIR inside the repo: %s', async (_, dir) => {
+    vi.stubEnv('UPLOAD_DIR', dir);
+    await expect(createTestApp()).rejects.toThrow(/outside the repo/);
+    expect(
+      existsSync(path.join(repoRoot, 'frontend', 'public', 'uploads')),
+    ).toBe(false);
+  });
+
+  it('refuses a symlink that points into the repo', async () => {
+    const link = path.join(parent, 'link-into-repo');
+    symlinkSync(path.join(repoRoot, 'frontend'), link);
+    vi.stubEnv('UPLOAD_DIR', path.join(link, 'uploads'));
+    try {
+      await expect(createTestApp()).rejects.toThrow(/outside the repo/);
+    } finally {
+      rmSync(path.join(repoRoot, 'frontend', 'uploads'), {
+        recursive: true,
+        force: true,
+      });
+    }
   });
 
   it('creates an absolute UPLOAD_DIR that only its owner can open', async () => {
