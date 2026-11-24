@@ -236,7 +236,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 **Out.** Fixing and accepting, re-extraction, the consistency checks, and using corrections as an evaluation set.
 
-**Doors.** One-way: documents are sent to an LLM provider for the first time. That includes the samples the extraction test sends.
+**Doors.** One-way: documents are sent to an LLM provider for the first time. That includes the samples the extraction test sends. Sending the five samples to Anthropic was approved on 2026-11-24.
 
 ## 6. Fix and review
 
