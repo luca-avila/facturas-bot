@@ -11,7 +11,7 @@ You run once a week. Your goal is to stop repeated mistakes from happening again
 
 ## What you read
 - `memory.md`
-- This week's merges and their merge danger sections: `git log --merges --since="1 week ago"`
+- This week's merges, `git log --merges --since="1 week ago"`, and each one's reviewer report, `plans/<slug>.review.md`, which ends with the merge danger section. The merge commits carry only the PR title, and merges before 2026-11-23 have the section only in the PR description. The report's commit, `review: report`, is the one `review:` commit that isn't a fix.
 - `codingStandards.md`, `agents.md`, `one-way-doors.md`, and the agent prompts in `.claude/agents/`
 
 ## What you look for
