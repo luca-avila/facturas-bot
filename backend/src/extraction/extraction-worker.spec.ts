@@ -160,6 +160,32 @@ describe('ExtractionWorker: claiming, leases and retries', () => {
     expect(await h.job(id)).toMatchObject({ status: 'succeeded', attempts: 2 });
   });
 
+  it("drops the failed attempt of a worker that stalled past its lease, so it doesn't requeue the job", async () => {
+    await knownSupplier();
+    const id = await h.upload();
+    // Breaks the schema, so the late call ends as a failed attempt.
+    const stalled = h.fake.hold({ ...output(), type: 'receipt' });
+    const late = h.runOnce(id);
+    await stalled.received;
+
+    h.advance(5 * MINUTE + 1);
+    h.fake.reply(output());
+    await expect(h.runOnce(id)).resolves.toBe(true);
+
+    stalled.release();
+    await expect(late).resolves.toBe(true);
+
+    expect(await h.job(id)).toMatchObject({
+      status: 'succeeded',
+      attempts: 2,
+      locked_until: null,
+      last_error: null,
+    });
+    expect(await h.document(id)).toMatchObject({
+      review_status: 'unreviewed',
+    });
+  });
+
   it('ends a job whose lease expired after the last attempt, with no call', async () => {
     const id = await h.upload();
     await h.prisma.$executeRaw`
