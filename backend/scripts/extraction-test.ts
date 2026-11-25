@@ -33,6 +33,7 @@ import {
   type ExtractionOutput,
   PROMPT,
 } from '../src/extraction/prompt.js';
+import { mapExtraction } from '../src/extraction/extraction-mapping.js';
 import { inspectPhoto } from '../src/uploads/photo.js';
 
 const LEVELS: readonly ExtractionEffort[] = [
@@ -42,6 +43,14 @@ const LEVELS: readonly ExtractionEffort[] = [
   'xhigh',
   'max',
 ];
+/**
+ * The levels a default run sends, and the only ones that can pass the gate.
+ * `max` runs out of tokens on most samples, costs more and reads no better,
+ * so it only runs with `--effort=max`.
+ */
+const GATED_LEVELS: readonly ExtractionEffort[] = LEVELS.filter(
+  (level) => level !== 'max',
+);
 /** Haiku 5.5 reads up to this many visual tokens before it downscales. */
 const MAX_IMAGE_TOKENS = 4_784;
 const INPUT_USD_PER_MTOK = new Decimal('0.10');
@@ -301,8 +310,12 @@ function judgeByChecks(out: ExtractionOutput, sample: string): Check[] {
 
   const subtotal = money(out.subtotal);
   const total = money(out.total);
-  const taxSum = sum(out.taxes.map((tax) => tax.amount));
-  if (out.taxes.length === 0 || subtotal === null || total === null) {
+  // Summed the way the worker stores them: a tax with no readable amount or
+  // label is dropped. A dropped row that had a real amount still shows, as a
+  // sum that misses the total.
+  const taxes = storedTaxes(out);
+  const taxSum = sum(taxes.map((tax) => tax.amount));
+  if (taxes.length === 0 || subtotal === null || total === null) {
     checks.push({ name: 'totalsAddUp', verdict: 'skipped' });
   } else {
     checks.push(
@@ -336,6 +349,12 @@ function judgeByChecks(out: ExtractionOutput, sample: string): Check[] {
     );
   }
   return checks;
+}
+
+/** The taxes the worker would store, through its own mapping. */
+function storedTaxes(out: ExtractionOutput): { amount: string }[] {
+  const mapped = mapExtraction(out);
+  return mapped.kind === 'document' ? mapped.taxes : [];
 }
 
 function costUsd(inputTokens: number, outputTokens: number): Decimal {
@@ -397,7 +416,7 @@ async function main(): Promise<number> {
   });
   const levels =
     values.effort === undefined
-      ? LEVELS
+      ? GATED_LEVELS
       : LEVELS.filter((level) => level === values.effort);
   if (levels.length === 0) {
     console.error(`--effort must be one of ${LEVELS.join(', ')}.`);
@@ -487,7 +506,11 @@ async function main(): Promise<number> {
       `  ${level}: ${passed}/${levelRuns.length} samples passed, ` +
         `avg ${avg(inTokens)} in / ${avg(outTokens)} out tokens, US$ ${avgCost} per document`,
     );
-    if (passed === samples.length && levelRuns.length === samples.length) {
+    if (
+      GATED_LEVELS.includes(level) &&
+      passed === samples.length &&
+      levelRuns.length === samples.length
+    ) {
       anyLevelPassed = true;
     }
   }
@@ -546,6 +569,9 @@ function printRun(run: SampleRun, showValues: boolean): void {
       `US$ ${costUsd(inputTokens, outputTokens).toSignificantDigits(3).toString()}  ${time}`,
   );
   if (showValues) {
+    for (const tax of run.outcome.output.taxes) {
+      console.log(`    tax row: ${JSON.stringify(tax)}`);
+    }
     for (const c of run.checks) {
       if (c.verdict === 'skipped') continue;
       console.log(

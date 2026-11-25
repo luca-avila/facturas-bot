@@ -299,7 +299,18 @@ This rule also removes the riskiest misread in the pipeline. A CAE expiry mistak
 - The client is pinned: `new Anthropic({ apiKey, baseURL: 'https://api.anthropic.com', maxRetries: 0, timeout, logLevel: 'warn' })`. Passing `apiKey` stops the SDK reading other credentials, `baseURL` stops `ANTHROPIC_BASE_URL` sending the photos elsewhere, and `logLevel` stops `ANTHROPIC_LOG=debug` printing requests. No `system`, no `thinking` and no sampling parameters.
 - The schema gives the CAE expiry its own field, `caeDueDate`, stored nowhere else, so it's less likely to end up in `printedDueDate`. Neither printed date, nor a printed term, ever reaches `due_date` (D4).
 
-Estimated cost is about US$0.002 per document, or about US$3 a year at current volume. Measure it from `usage` in the extraction test.
+Measured on 2026-11-25 with `claude-haiku-5-5` and the five samples, one page each (`npm run extraction:test`, prompt version 1):
+
+| Effort | Samples passing | Avg input tokens | Avg output tokens | US$ per document |
+| --- | --- | --- | --- | --- |
+| low | 5/5 | 6,474 | 1,782 | 0.00154 |
+| medium | 5/5 | 6,474 | 2,037 | 0.00167 |
+| high | 5/5 | 6,474 | 2,227 | 0.00176 |
+| xhigh | 4/5 (one call timed out) | 6,474 | 4,190 | 0.00274 |
+
+- `max` is left out of the gate: in earlier runs it hit `max_tokens` on three of five samples, cost more, and read no better.
+- The worker uses `medium`, by the user's choice, though `low` also passed. That's about US$2 a year at current volume.
+- A white 1650×2200 image counts 4,664 tokens, under the 4,784 at which Haiku 5.5 downscales, so the 2200 px setting holds.
 
 **Prompt.** The schema mirrors the tables above. Numbers are decimal strings, dates are ISO, and anything unreadable is `null`, never a guess. The prompt must say that the CAE expiry is not a payment due date, and it must ignore handwriting, highlighter and text showing through from other pages.
 

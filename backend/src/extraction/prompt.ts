@@ -7,7 +7,7 @@ import { z } from 'zod/v4';
  */
 export const PROMPT_VERSION = '1';
 
-/** The lowest level at which every sample passed the extraction test. */
+/** Chosen from the levels that passed every sample in the extraction test (system-design.md). */
 export const EXTRACTION_EFFORT: ExtractionEffort = 'medium';
 
 export type ExtractionEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -21,6 +21,8 @@ export const PROMPT = `These photos are the pages of one document that a restaur
 - Amounts are decimal strings with a dot for decimals and no thousands separator or currency sign. Argentine documents print "1.234,50", which is "1234.50". Amounts are positive, also on a credit note.
 - Dates are YYYY-MM-DD. Printed dates are day/month/year, so 03/11/2026 is "2026-11-03".
 - The supplier is the issuer, in the header. The restaurant is the customer. Several CUITs can appear on the page: never put the customer's CUIT in supplierCuit.
+- A factura A can print several "Neto" lines, one per IVA rate, such as 10.5% and 21%. The subtotal is the sum of all the Neto lines. Each IVA line is a separate tax, with its own Neto as its base.
+- "Per. IVA" and "Per. IIBB <jurisdiction>" are perceptions, not IVA. Extract each one as its own tax, even when it is 0.00. They add to the total: total = sum of the Netos + sum of the IVA lines + sum of the perceptions.
 - The CAE expiry date (Fecha de Vto. de CAE, Vto. CAE) is not a payment due date. It goes in caeDueDate only.
 - Ignore handwriting, stamps, highlighter, and text showing through from the back of the page or from another page.
 - If the photos don't show an invoice, a delivery note or a credit note, set isDocument to false and type to "other", leave every other field null and the lists empty.`;
