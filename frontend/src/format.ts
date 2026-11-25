@@ -1,6 +1,6 @@
 // String work only: the frontend never turns an amount into a number (D1).
 
-import type { DocumentType } from './accounts-api'
+import type { DocumentType, ErrorSummary } from './accounts-api'
 import { DOCUMENT_TYPE_LABELS } from './labels'
 
 const NBSP = ' '
@@ -76,4 +76,37 @@ export function documentTitle(doc: { type: DocumentType; letter: string | null; 
 /** 1 → "1 página", 2 → "2 páginas". */
 export function formatPageCount(n: number): string {
   return n === 1 ? '1 página' : `${n} páginas`
+}
+
+const DECIMAL = /^(-?)(\d+)(?:\.(\d+))?$/
+
+/**
+ * A decimal string as the backend sends it, with at least `minDecimals`
+ * decimals and no trailing zeros past them: "4.000", 0 → "4"; "2.500", 0 →
+ * "2,5"; "6198.3500", 2 → "6.198,35". Throws on anything else.
+ */
+export function formatDecimal(value: string, minDecimals: number): string {
+  const match = DECIMAL.exec(value)
+  if (!match) throw new Error(`Not a decimal: "${value}"`)
+  const [, sign, integer, fraction = ''] = match
+  let decimals = fraction.replace(/0+$/, '')
+  if (decimals.length < minDecimals) decimals = fraction.slice(0, minDecimals).padEnd(minDecimals, '0')
+  const formatted = decimals === '' ? groupThousands(integer) : `${groupThousands(integer)},${decimals}`
+  return sign === '-' ? `${MINUS}${formatted}` : formatted
+}
+
+/** The Resumen warning about Error documents. */
+export function errorBanner(summary: ErrorSummary): { title: string; detail: string } {
+  const one = summary.count === 1
+  const documents = one ? '1 documento' : `${summary.count} documentos`
+  const title =
+    summary.supplierName === null
+      ? `${documents} con error`
+      : `${documents} de ${summary.supplierName} con error`
+  const included = one ? 'está incluido' : 'están incluidos'
+  const detail =
+    summary.amount === '0.00'
+      ? `No ${included} en el saldo.`
+      : `por ${formatMoney(summary.amount)} no ${included} en el saldo.`
+  return { title, detail }
 }

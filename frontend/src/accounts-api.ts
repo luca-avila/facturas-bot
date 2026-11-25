@@ -11,6 +11,16 @@ export type DocumentStatus = DebtStatus | CreditStatus
 export type ReceivingType = Exclude<DocumentType, 'credit_note'>
 export type PaymentMethod = 'transfer' | 'echeq' | 'cash' | 'mercado_pago' | 'other'
 export type SupplierSort = 'overdue' | 'name' | 'total'
+/** Every issue code, in stored order. */
+export type IssueCode =
+  | 'extraction_failed'
+  | 'unsupported_document'
+  | 'supplier_unresolved'
+  | 'missing_total'
+  | 'missing_issue_date'
+  | 'supplier_term_missing'
+  | 'duplicate_number'
+export type TaxKind = 'iva' | 'iva_perception' | 'iibb_perception' | 'other'
 
 export type FieldErrorCode =
   | 'name_required'
@@ -66,6 +76,37 @@ export interface SupplierList {
   totals: SupplierFigures
   /** YYYY-MM-DD in Buenos Aires, the date the statuses were derived for. */
   today: string
+  /** Every Error document, from the same snapshot. */
+  errors: ErrorSummary
+}
+
+/** The Error warning. */
+export interface ErrorSummary {
+  count: number
+  /** Totals of the ones that aren't credit notes. */
+  amount: string
+  /** Only when every one has the same known supplier. */
+  supplierName: string | null
+}
+
+export interface ErrorDocumentRow {
+  id: string
+  type: Exclude<DocumentType, 'opening_balance'> | null
+  letter: string | null
+  number: string | null
+  supplier: { id: string; name: string } | null
+  issueDate: string | null
+  total: string | null
+  createdByName: string
+  /** The upload date in Buenos Aires. */
+  createdOn: string
+  issues: IssueCode[]
+}
+
+export interface ErrorDocumentList {
+  summary: ErrorSummary
+  /** Oldest upload first. */
+  documents: ErrorDocumentRow[]
 }
 
 export interface AccountDocument {
@@ -268,6 +309,41 @@ export interface DocumentDetail {
   createdTime: string
   /** By position. Empty for a manual document. */
   images: { id: string; position: number }[]
+  supplier: { id: string; name: string } | null
+  issueDate: string | null
+  dueDate: string | null
+  dueDateSource: DueDateSource | null
+  /** Numbers keep their column's scale, such as "4.000" or "6198.3500". */
+  subtotal: string | null
+  total: string | null
+  cae: string | null
+  notes: string | null
+  /** In stored order. */
+  issues: IssueCode[]
+  /** By position. */
+  lines: DocumentLine[]
+  taxes: DocumentTax[]
+}
+
+export interface DocumentLine {
+  position: number
+  productCode: string | null
+  description: string
+  quantity: string | null
+  unit: string | null
+  packageText: string | null
+  unitPrice: string | null
+  ivaRate: string | null
+  discountPct: string | null
+  lineTotal: string | null
+}
+
+export interface DocumentTax {
+  kind: TaxKind
+  label: string
+  rate: string | null
+  base: string | null
+  amount: string
 }
 
 /** A field error on one photo of an upload. */
@@ -409,6 +485,10 @@ export function getPayment(id: string): Promise<ApiResult<PaymentDetail>> {
 
 export function listUploads(scope: UploadScope): Promise<ApiResult<UploadList>> {
   return call(`/api/uploads?${new URLSearchParams({ scope }).toString()}`, { method: 'GET' }, json<UploadList>)
+}
+
+export function listErrorDocuments(): Promise<ApiResult<ErrorDocumentList>> {
+  return call('/api/error-documents', { method: 'GET' }, json<ErrorDocumentList>)
 }
 
 export function getDocument(id: string): Promise<ApiResult<DocumentDetail>> {
