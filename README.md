@@ -143,6 +143,8 @@ npm install
 npm run dev
 ```
 
+The worker sends each upload's photos to Anthropic. `npm run extraction:test` in `backend/` runs the gate against `samples/`.
+
 `npm run start:dev` sets `NODE_ENV=development`, the only setting that drops `Secure` from the session cookie. That's what lets a phone sign in over plain HTTP on the local network. To try it from a phone, run the frontend with `npm run dev -- --host` and open `http://<computer's LAN IP>:5173`. Vite sends `/api` to the backend, so the browser sees one origin.
 
 ### 4. Create an account
