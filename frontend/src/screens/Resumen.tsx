@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { listSuppliers, type ApiResult, type SupplierList, type SupplierListRow, type SupplierSort } from '../accounts-api'
-import { formatCredit, formatMoney } from '../format'
+import { errorBanner, formatCredit, formatMoney } from '../format'
 import { SUPPLIER_SORT_LABELS } from '../labels'
 import { rememberResumenSearch } from './resumen-search'
 
@@ -67,6 +67,8 @@ function Resumen() {
     <section className="screen">
       <h1>Resumen</h1>
 
+      {result?.ok && result.value.errors.count > 0 && <ErrorCallout summary={result.value.errors} />}
+
       {result?.ok && <SummaryCard totals={result.value.totals} />}
 
       <div className="toolbar">
@@ -131,6 +133,19 @@ function Resumen() {
         + Proveedor nuevo
       </Link>
     </section>
+  )
+}
+
+function ErrorCallout({ summary }: { summary: SupplierList['errors'] }) {
+  const { title, detail } = errorBanner(summary)
+  return (
+    <div className="callout error-callout">
+      <p>
+        <strong>{title}</strong>
+      </p>
+      <p>{detail}</p>
+      <Link to="/a-resolver">Ver A resolver →</Link>
+    </div>
   )
 }
 

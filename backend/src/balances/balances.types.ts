@@ -1,4 +1,5 @@
 import type { Money } from '../common/money.js';
+import type { IssueCode } from '../documents/issues.js';
 import type {
   DocumentType,
   PaymentMethod,
@@ -35,6 +36,8 @@ export interface SupplierList {
   totals: SupplierFigures;
   /** Buenos Aires, the date the statuses were derived for. */
   today: string;
+  /** Every *Error* document, from the same snapshot. */
+  errors: ErrorSummary;
 }
 
 export type DebtStatus = 'pending' | 'overdue' | 'paid';
@@ -150,4 +153,34 @@ export interface DocumentApplied {
   received: Money;
   /** Applied from it, when it's a credit note. */
   given: Money;
+}
+
+/** The *Error* warning: how many documents don't count, and what they add up to. */
+export interface ErrorSummary {
+  count: number;
+  /** Totals of the ones that aren't credit notes. */
+  amount: string;
+  /** Only when every one has the same known supplier. */
+  supplierName: string | null;
+}
+
+export interface ErrorDocumentRow {
+  id: string;
+  type: DocumentType | null;
+  letter: string | null;
+  number: string | null;
+  supplier: { id: string; name: string } | null;
+  issueDate: string | null;
+  total: string | null;
+  createdByName: string;
+  /** The upload date in Buenos Aires. */
+  createdOn: string;
+  /** Codes, in stored order. */
+  issues: IssueCode[];
+}
+
+export interface ErrorDocumentList {
+  summary: ErrorSummary;
+  /** Oldest upload first. */
+  documents: ErrorDocumentRow[];
 }

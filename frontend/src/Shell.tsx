@@ -1,6 +1,7 @@
 import { Link, Navigate, Route, Routes } from 'react-router'
 import type { SessionUser } from './api'
 import AplicarCredito from './screens/AplicarCredito'
+import AResolver from './screens/AResolver'
 import DocumentForm from './screens/DocumentForm'
 import Documento from './screens/Documento'
 import MarcarPagado from './screens/MarcarPagado'
@@ -27,6 +28,7 @@ function Shell({ user, onSignOut }: Props) {
         </Link>
         <nav className="shell-nav">
           <Link to="/">Resumen</Link>
+          <Link to="/a-resolver">A resolver</Link>
           <Link to="/subir">Subir</Link>
           <Link to="/subidas">Subidas</Link>
           <Link to="/pagos">Pagos</Link>
@@ -45,6 +47,7 @@ function Shell({ user, onSignOut }: Props) {
           <Route path="/proveedores/:id/cargar" element={<DocumentForm />} />
           <Route path="/proveedores/:id/aplicar-credito" element={<AplicarCredito />} />
           <Route path="/proveedores/:id/documentos/:documentId/marcar-pagado" element={<MarcarPagado />} />
+          <Route path="/a-resolver" element={<AResolver />} />
           <Route path="/subir" element={<Subir />} />
           <Route path="/subidas" element={<Subidas />} />
           <Route path="/documentos/:id" element={<Documento />} />

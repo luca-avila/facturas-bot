@@ -60,7 +60,8 @@ interface OtherDocumentError extends FieldError {
 }
 
 /**
- * The only writer of `document_images` and `extraction_jobs`. Every upload
+ * The only writer of `document_images`, and the only code that creates
+ * `extraction_jobs`: the worker updates them after that. Every upload
  * takes `ADVISORY_LOCKS.uploads` before the same-image check, so two uploads
  * of the same photos can't both create a document.
  */

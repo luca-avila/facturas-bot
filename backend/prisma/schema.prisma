@@ -97,7 +97,11 @@ model Document {
   issueDate        DateTime?      @map("issue_date") @db.Date
   dueDate          DateTime?      @map("due_date") @db.Date
   dueDateSource    DueDateSource? @map("due_date_source")
+  subtotal         Decimal?       @db.Decimal(14, 2)
   total            Decimal?       @db.Decimal(14, 2)
+  cae              String?
+  /// Open validation issues, as [{ "code": "…" }], in the order of ISSUE_CODES.
+  issues           Json           @default("[]")
   notes            String?
   createdById      String         @map("created_by") @db.Uuid
   createdBy        User           @relation("DocumentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
@@ -112,6 +116,8 @@ model Document {
   applicationsGiven    Application[]   @relation("ApplicationCreditNote")
   images               DocumentImage[]
   extractionJobs       ExtractionJob[]
+  lines                DocumentLine[]
+  taxes                DocumentTax[]
 
   @@map("documents")
 }
@@ -148,17 +154,70 @@ enum ExtractionJobStatus {
 }
 
 model ExtractionJob {
-  id         String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  documentId String              @map("document_id") @db.Uuid
-  document   Document            @relation(fields: [documentId], references: [id], onDelete: Restrict)
-  status     ExtractionJobStatus
-  attempts   Int
-  runAfter   DateTime            @map("run_after") @db.Timestamptz(6)
-  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId    String              @map("document_id") @db.Uuid
+  document      Document            @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  status        ExtractionJobStatus
+  attempts      Int
+  runAfter      DateTime            @map("run_after") @db.Timestamptz(6)
+  /// Set while running: the lease. Null otherwise.
+  lockedUntil   DateTime?           @map("locked_until") @db.Timestamptz(6)
+  model         String?
+  promptVersion String?             @map("prompt_version")
+  /// The model's JSON, written once (E3).
+  rawOutput     Json?               @map("raw_output")
+  lastError     String?             @map("last_error")
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([documentId])
   @@map("extraction_jobs")
+}
+
+/// Rows never change: a run replaces all of a document's lines.
+model DocumentLine {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId  String   @map("document_id") @db.Uuid
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  position    Int
+  productCode String?  @map("product_code")
+  description String
+  quantity    Decimal? @db.Decimal(14, 3)
+  unit        String?
+  packageText String?  @map("package_text")
+  unitPrice   Decimal? @map("unit_price") @db.Decimal(16, 4)
+  ivaRate     Decimal? @map("iva_rate") @db.Decimal(5, 2)
+  discountPct Decimal? @map("discount_pct") @db.Decimal(5, 2)
+  lineTotal   Decimal? @map("line_total") @db.Decimal(14, 2)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([documentId, position])
+  @@map("document_lines")
+}
+
+enum TaxKind {
+  iva
+  iva_perception
+  iibb_perception
+  other
+
+  @@map("tax_kind")
+}
+
+/// Rows never change: a run replaces all of a document's taxes.
+model DocumentTax {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId String   @map("document_id") @db.Uuid
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  kind       TaxKind
+  label      String
+  rate       Decimal? @db.Decimal(5, 2)
+  base       Decimal? @db.Decimal(14, 2)
+  amount     Decimal  @db.Decimal(14, 2)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([documentId])
+  @@map("document_taxes")
 }
 
 enum PaymentMethod {

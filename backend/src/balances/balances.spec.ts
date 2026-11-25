@@ -208,11 +208,15 @@ describe('balances', () => {
 
     it('returns no rows and zero totals when nothing matches', async () => {
       const result = await list(`q=${randomUUID()}`);
-      expect(result).toEqual({
-        suppliers: [],
-        totals: ZERO,
-        today: '2026-11-10',
-      });
+      // `errors` is global: other spec files add Error documents.
+      expect(result.suppliers).toEqual([]);
+      expect(result.totals).toEqual(ZERO);
+      expect(result.today).toBe('2026-11-10');
+      expect(Object.keys(result.errors).sort()).toEqual([
+        'amount',
+        'count',
+        'supplierName',
+      ]);
     });
 
     it('returns every supplier for a blank search', async () => {

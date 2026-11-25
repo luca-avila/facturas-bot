@@ -7,6 +7,7 @@ import type {
   DocumentType,
   DueDateSource,
   FieldErrorCode,
+  IssueCode,
   PaymentMethod,
   ReviewStatus,
   SupplierSort,
@@ -96,6 +97,18 @@ export const FIELD_ERROR_MESSAGES: Record<FieldErrorCode, string> = {
   photo_type_invalid: 'Este formato no se puede subir. Sacá la foto desde la app o elegí JPG/PNG.',
   photo_repeated: 'Esta foto ya está en otra página de este documento.',
   photo_in_other_document: 'Esta foto ya está en otro documento.',
+}
+
+/** Why a document is in Error, in plain Spanish. */
+export const ISSUE_MESSAGES: Record<IssueCode, string> = {
+  extraction_failed: 'No pudimos leer el documento.',
+  unsupported_document: 'Esto no parece una factura, un remito ni una nota de crédito.',
+  supplier_unresolved:
+    'No pudimos identificar al proveedor: falta el CUIT, no es válido, es el del restaurante o no se lee el nombre.',
+  missing_total: 'Falta el total.',
+  missing_issue_date: 'Falta la fecha de emisión.',
+  supplier_term_missing: 'El proveedor no tiene plazo de pago, así que no se puede calcular el vencimiento.',
+  duplicate_number: 'Ya existe un documento de este proveedor con el mismo tipo, letra y número.',
 }
 
 export const UPLOAD_SCOPE_LABELS: Record<UploadScope, string> = {

@@ -5,6 +5,7 @@ import {
   formatCuit,
   formatDate,
   formatAmountInput,
+  formatDecimal,
   formatDueIn,
   formatMoney,
   formatPageCount,
@@ -129,5 +130,24 @@ describe('formatPageCount', () => {
     [2, '2 páginas'],
   ])('formats %i as %j', (n, expected) => {
     expect(formatPageCount(n)).toBe(expected)
+  })
+})
+
+describe('formatDecimal', () => {
+  it.each<[string, number, string]>([
+    ['4.000', 0, '4'],
+    ['2.500', 0, '2,5'],
+    ['6198.3500', 2, '6.198,35'],
+    ['21.00', 0, '21'],
+    ['-1.50', 0, '−1,5'],
+    ['6611.5640', 2, '6.611,564'],
+    ['12', 2, '12,00'],
+    ['0.000', 0, '0'],
+  ])('formats %j with %i decimals as %j', (value, minDecimals, expected) => {
+    expect(formatDecimal(value, minDecimals)).toBe(expected)
+  })
+
+  it.each(['1,5', 'abc', '', '1.', '.5', '+1'])('throws on %j', (value) => {
+    expect(() => formatDecimal(value, 0)).toThrow()
   })
 })

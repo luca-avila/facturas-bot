@@ -100,4 +100,43 @@ describe('AuditService', () => {
     });
     expect(count).toBe(0);
   });
+
+  it('writes a worker entry with no user_id', async () => {
+    await prisma.$transaction(async (tx) => {
+      const after = await audit.snapshot(tx, 'suppliers', supplierId);
+      await audit.recordByWorker(tx, {
+        entity: 'suppliers',
+        entityId: supplierId,
+        action: 'create',
+        before: null,
+        after,
+      });
+    });
+    const rows = await prisma.auditLog.findMany({
+      where: { entityId: supplierId },
+      select: { userId: true, action: true, entity: true },
+    });
+    expect(rows).toEqual([
+      { userId: null, action: 'create', entity: 'suppliers' },
+    ]);
+  });
+
+  it('rolls a worker entry back with the transaction that wrote it', async () => {
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await audit.recordByWorker(tx, {
+          entity: 'suppliers',
+          entityId: supplierId,
+          action: 'update',
+          before: null,
+          after: null,
+        });
+        throw new Error('the change failed');
+      }),
+    ).rejects.toThrow('the change failed');
+    const count = await prisma.auditLog.count({
+      where: { entityId: supplierId },
+    });
+    expect(count).toBe(0);
+  });
 });

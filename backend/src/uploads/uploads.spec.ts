@@ -224,6 +224,17 @@ describe('uploads', () => {
           { id: images[0].id, position: 1 },
           { id: images[1].id, position: 2 },
         ],
+        supplier: null,
+        issueDate: null,
+        dueDate: null,
+        dueDateSource: null,
+        subtotal: null,
+        total: null,
+        cae: null,
+        notes: null,
+        issues: [],
+        lines: [],
+        taxes: [],
       });
     });
 

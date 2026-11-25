@@ -282,14 +282,35 @@ This rule also removes the riskiest misread in the pipeline. A CAE expiry mistak
 
 **Worker.** A separate container from the backend image, running one job at a time. Volume is about five documents a working day, so there's no need for Redis or concurrency. It claims jobs with `FOR UPDATE SKIP LOCKED`, holds a lease in `locked_until`, and retries three times with backoff before ending in `extraction_failed`. Those are the only retries: set `maxRetries: 0` in the SDK so they don't multiply.
 
+- It's its own process, `backend/src/worker.ts`: a Nest application context with no HTTP server. The backend never imports the extraction module, so it never holds the API key and can't call the LLM.
+- Four attempts: the first plus three retries. After attempts 1, 2 and 3 fail it waits 30 s, 2 min and 8 min (30 s × 4ⁿ⁻¹), and the fourth failure ends in `extraction_failed`. A bad API key takes about 10.5 minutes to reach *Error*.
+- Each call times out after 3 minutes. A lease lasts 5 minutes, longer than a call, so a live worker never loses its job. An idle worker looks for work every 5 s.
+- A failed attempt is any `AnthropicError` from the SDK (every HTTP and connection error, and also JSON it can't parse or that fails the schema: `parse()` throws for those instead of returning a null `parsed_output`), a `stop_reason` of `max_tokens`, `refusal` or `model_context_window_exceeded` (checked before `parsed_output`, since a refusal can still parse), a null `parsed_output`, or a stored image that can't be read. `last_error` keeps the class, status and message, cut to 1,000 characters. Logs show only ids, classes and statuses.
+- Two cases end a job at the claim, with no call: a document that's deleted or no longer `processing` (the job fails and the document isn't touched), and pages adding up to more than 22,000,000 bytes, about 29.3 MB in base64, under the API's 32 MB request limit (the document goes to `extraction_failed`).
+- The attempt number is the fencing token. Claiming increments `attempts` and commits before the call. Every later write locks the job and checks `status = 'running' AND attempts = <claimed>`, so a worker that stalled past its lease can't write a second result.
+- The claim reads `$now` from `now()` in `clock.ts`, never SQL `now()`. A running job whose lease expired after its last attempt ends as `extraction_failed` with no call.
+
 **Call.** `client.messages.parse()` from `@anthropic-ai/sdk`, with a Zod schema through `output_config: { format: zodOutputFormat(schema) }`, and the images before the text. The model comes from `LLM_MODEL` (`claude-haiku-5-5`).
 
 - Set `output_config.effort` explicitly. Haiku's default is `medium`, and the extraction test decides the level.
 - Thinking is on by default and counts toward `max_tokens`. Use around 16,000 so a long invoice doesn't get cut off.
 - Don't send `temperature`, `top_p` or `top_k`: they return a 400.
 - An attempt fails if `stop_reason` is `max_tokens` or `refusal`, or if `parsed_output` is null. Haiku has no server-side fallback for refusals, so that document ends in `extraction_failed`.
+- The client is pinned: `new Anthropic({ apiKey, baseURL: 'https://api.anthropic.com', maxRetries: 0, timeout, logLevel: 'warn' })`. Passing `apiKey` stops the SDK reading other credentials, `baseURL` stops `ANTHROPIC_BASE_URL` sending the photos elsewhere, and `logLevel` stops `ANTHROPIC_LOG=debug` printing requests. No `system`, no `thinking` and no sampling parameters.
+- The schema gives the CAE expiry its own field, `caeDueDate`, stored nowhere else, so it's less likely to end up in `printedDueDate`. Neither printed date, nor a printed term, ever reaches `due_date` (D4).
 
-Estimated cost is about US$0.002 per document, or about US$3 a year at current volume. Measure it from `usage` in the extraction test.
+Measured on 2026-11-25 with `claude-haiku-5-5` and the five samples, one page each (`npm run extraction:test`, prompt version 1):
+
+| Effort | Samples passing | Avg input tokens | Avg output tokens | US$ per document |
+| --- | --- | --- | --- | --- |
+| low | 5/5 | 6,474 | 1,782 | 0.00154 |
+| medium | 5/5 | 6,474 | 2,037 | 0.00167 |
+| high | 5/5 | 6,474 | 2,227 | 0.00176 |
+| xhigh | 4/5 (one call timed out) | 6,474 | 4,190 | 0.00274 |
+
+- `max` is left out of the gate: in earlier runs it hit `max_tokens` on three of five samples, cost more, and read no better.
+- The worker uses `medium`, by the user's choice, though `low` also passed. That's about US$2 a year at current volume.
+- A white 1650×2200 image counts 4,664 tokens, under the 4,784 at which Haiku 5.5 downscales, so the 2200 px setting holds.
 
 **Prompt.** The schema mirrors the tables above. Numbers are decimal strings, dates are ISO, and anything unreadable is `null`, never a guess. The prompt must say that the CAE expiry is not a payment due date, and it must ignore handwriting, highlighter and text showing through from other pages.
 
@@ -320,6 +341,9 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 - A valid new CUIT creates the supplier automatically, using the printed name for both `name` and `legal_name`. The check digit catches any single misread digit, so a valid but wrong CUIT most likely belongs to someone else on the page, usually the restaurant. That's why the restaurant's own CUIT never resolves a supplier. A new supplier has no term, so its first invoice or delivery note always stops in *Error*, where a person sees it.
 - Suppliers created by hand need their CUIT, unless they're informal. Without it, their first document would create a second supplier.
 - `base × rate = tax` is deliberately not checked: real invoices differ from it by up to 19 cents.
+- Issues are stored on the document as `[{ "code": "…" }]`, in the order of the table above. `unsupported_document` is always alone: such a document gets no fields, lines, taxes or supplier.
+- The worker writes lines and taxes for *Error* documents too, so *Documento* can show what was read.
+- The *Error* warning in *Resumen* counts every *Error* document, and its amount adds up the totals of those that aren't credit notes: a credit note would lower the debt, not raise it.
 
 ### Duplicates
 
@@ -351,6 +375,9 @@ Where the wireframes differ from this file on purpose:
 - **Subidas (4g):** *Procesando* documents stay listed after 7 days.
 - **Subir (4a, 4b, 4f):** a button opens the phone's own camera, since a camera view inside the page needs HTTPS. Pages move with ↑ and ↓ instead of dragging. An upload that was already there opens its document with a notice, instead of a screen of its own.
 - **Subidas (4g):** rows have no thumbnail. The server never makes smaller copies (E5), and loading every full photo would spend the phone's data.
+- **A resolver (6a–6c):** no thumbnails, no actions and no grouping until slice 6, and each row shows the upload date, since an unreadable document has no other. No counter in the navigation yet.
+- **Resumen (2a):** only the *Error* warning above the totals, no line per supplier yet.
+- **Documento (5b, 5c, 5h):** *Datos* and *Foto* tabs at every width, and no payment section yet.
 
 ## Operations
 

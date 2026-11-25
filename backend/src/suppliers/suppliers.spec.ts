@@ -7,12 +7,12 @@ import {
   signIn,
   type CreatedTestUser,
 } from '../../test/app.js';
-import { TEST_CUITS } from '../../test/test-cuits.js';
+import { SUPPLIER_SPEC_CUITS } from '../../test/test-cuits.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /**
- * The only spec that gives suppliers a CUIT. There are five test CUITs and
- * `cuit` is unique, so each test starts by freeing them.
+ * `cuit` is unique and other spec files give their own suppliers CUITs, so
+ * each test starts by freeing only this file's group, `SUPPLIER_SPEC_CUITS`.
  */
 describe('suppliers', () => {
   let app: NestExpressApplication;
@@ -20,7 +20,7 @@ describe('suppliers', () => {
   let ana: CreatedTestUser;
   let session: string;
 
-  const [CEIBO_CUIT, OTHER_CUIT] = TEST_CUITS;
+  const [CEIBO_CUIT, OTHER_CUIT] = SUPPLIER_SPEC_CUITS;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -31,7 +31,7 @@ describe('suppliers', () => {
 
   beforeEach(async () => {
     await prisma.$executeRaw`
-      UPDATE suppliers SET cuit = NULL WHERE cuit = ANY(${[...TEST_CUITS]}::text[])`;
+      UPDATE suppliers SET cuit = NULL WHERE cuit = ANY(${[...SUPPLIER_SPEC_CUITS]}::text[])`;
   });
 
   afterAll(async () => {
