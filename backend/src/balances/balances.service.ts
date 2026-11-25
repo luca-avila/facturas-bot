@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { today } from '../common/clock.js';
+import { BUSINESS_TIME_ZONE, today } from '../common/clock.js';
 import { Money } from '../common/money.js';
 import { isUuid } from '../common/uuid.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -9,6 +9,8 @@ import type {
   CreditSourceRef,
   CreditStatus,
   DebtStatus,
+  ErrorDocumentList,
+  ErrorDocumentRow,
   DocumentApplied,
   PaymentApplication,
   PaymentDetail,
@@ -23,6 +25,8 @@ import type {
   SupplierListRow,
   SupplierSort,
 } from './balances.types.js';
+import { summarizeErrors } from './error-summary.js';
+import type { Issue } from '../documents/issues.js';
 
 interface SupplierSumsRow {
   id: string;
@@ -35,6 +39,38 @@ interface SupplierSumsRow {
   overdue: string;
   credit: string;
   balance: string;
+}
+
+interface ErrorRow {
+  id: string;
+  type: ErrorDocumentRow['type'];
+  letter: string | null;
+  number: string | null;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  issue_date: string | null;
+  total: string | null;
+  created_by_name: string;
+  created_on: string;
+  issues: Issue[];
+}
+
+function toErrorDocument(row: ErrorRow): ErrorDocumentRow {
+  return {
+    id: row.id,
+    type: row.type,
+    letter: row.letter,
+    number: row.number,
+    supplier:
+      row.supplier_id === null || row.supplier_name === null
+        ? null
+        : { id: row.supplier_id, name: row.supplier_name },
+    issueDate: row.issue_date,
+    total: row.total === null ? null : Money.fromString(row.total).toString(),
+    createdByName: row.created_by_name,
+    createdOn: row.created_on,
+    issues: row.issues.map((issue) => issue.code),
+  };
 }
 
 interface CountedRow {
@@ -156,8 +192,16 @@ export class BalancesService {
     sort: SupplierSort;
   }): Promise<SupplierList> {
     const date = today();
-    const rows = await this.prisma.$queryRaw<SupplierSumsRow[]>(
-      this.supplierSums(date, Prisma.empty),
+    // One snapshot, so the warning agrees with the balances. Read-only, so
+    // RepeatableRead is safe here.
+    const [rows, errorRows] = await this.prisma.$transaction(
+      [
+        this.prisma.$queryRaw<SupplierSumsRow[]>(
+          this.supplierSums(date, Prisma.empty),
+        ),
+        this.prisma.$queryRaw<ErrorRow[]>(this.errorRows()),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
     const query = fold(params.q.trim());
     const suppliers = rows
@@ -190,7 +234,18 @@ export class BalancesService {
         balance: sum('balance'),
       },
       today: date,
+      errors: summarizeErrors(errorRows.map(toErrorDocument)),
     };
+  }
+
+  /**
+   * *A resolver*: every *Error* document that isn't deleted (D3), oldest
+   * upload first, and the warning computed from those same rows.
+   */
+  async errorDocuments(): Promise<ErrorDocumentList> {
+    const rows = await this.prisma.$queryRaw<ErrorRow[]>(this.errorRows());
+    const documents = rows.map(toErrorDocument);
+    return { summary: summarizeErrors(documents), documents };
   }
 
   /**
@@ -434,6 +489,21 @@ export class BalancesService {
                     ELSE (SELECT COALESCE(SUM(x.amount), 0.00) FROM applications x WHERE x.document_id = d.id) END AS applied
       ) a
       WHERE d.deleted_at IS NULL AND d.review_status IN ('unreviewed', 'reviewed')`;
+  }
+
+  private errorRows(): Prisma.Sql {
+    const localCreatedAt = Prisma.sql`(d.created_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
+    return Prisma.sql`
+      SELECT d.id, d.type, d.letter, d.number, d.supplier_id, s.name AS supplier_name,
+             to_char(d.issue_date, 'YYYY-MM-DD') AS issue_date, d.total::text AS total,
+             u.name AS created_by_name,
+             to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,
+             d.issues
+      FROM documents d
+      JOIN users u ON u.id = d.created_by
+      LEFT JOIN suppliers s ON s.id = d.supplier_id
+      WHERE d.deleted_at IS NULL AND d.review_status = 'error'
+      ORDER BY d.created_at, d.id`;
   }
 
   /** credited(): every payment that isn't deleted (D3), with what it has left to apply. */

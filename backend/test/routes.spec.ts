@@ -63,6 +63,7 @@ describe('every route', () => {
         'get /api/uploads',
         'get /api/documents/:id',
         'get /api/images/:id',
+        'get /api/error-documents',
       ]),
     );
   });

@@ -100,6 +100,20 @@ export class ExtractionHarness {
     return this.http().get(url).set('Cookie', `session=${this.session}`);
   }
 
+  post(url: string, body: object) {
+    return this.http()
+      .post(url)
+      .set('Cookie', `session=${this.session}`)
+      .send(body);
+  }
+
+  put(url: string, body: object) {
+    return this.http()
+      .put(url)
+      .set('Cookie', `session=${this.session}`)
+      .send(body);
+  }
+
   delete(url: string) {
     return this.http().delete(url).set('Cookie', `session=${this.session}`);
   }

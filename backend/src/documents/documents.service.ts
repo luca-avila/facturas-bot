@@ -10,13 +10,16 @@ import { isUuid } from '../common/uuid.js';
 import {
   type DocumentSource,
   type DocumentType,
+  type DueDateSource,
   Prisma,
   type ReviewStatus,
+  type TaxKind,
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { normalizeNumber } from './document-number.js';
 import type { ManualDocumentFields } from './document-input.js';
 import { resolveDueDate } from './due-date.js';
+import type { Issue, IssueCode } from './issues.js';
 
 /** Invariant 7. Only this index means a duplicate document number. */
 const NUMBER_INDEX = 'documents_number_unique';
@@ -35,6 +38,42 @@ export interface DocumentDetail {
   createdTime: string;
   /** By position. Empty for a manual document. */
   images: { id: string; position: number }[];
+  supplier: { id: string; name: string } | null;
+  issueDate: string | null;
+  dueDate: string | null;
+  dueDateSource: DueDateSource | null;
+  /** Amounts and quantities keep their column's scale. */
+  subtotal: string | null;
+  total: string | null;
+  cae: string | null;
+  notes: string | null;
+  /** Codes, in stored order. */
+  issues: IssueCode[];
+  /** By position. */
+  lines: DocumentLineDetail[];
+  /** By kind, label, amount and id. */
+  taxes: DocumentTaxDetail[];
+}
+
+export interface DocumentLineDetail {
+  position: number;
+  productCode: string | null;
+  description: string;
+  quantity: string | null;
+  unit: string | null;
+  packageText: string | null;
+  unitPrice: string | null;
+  ivaRate: string | null;
+  discountPct: string | null;
+  lineTotal: string | null;
+}
+
+export interface DocumentTaxDetail {
+  kind: TaxKind;
+  label: string;
+  rate: string | null;
+  base: string | null;
+  amount: string;
 }
 
 interface DetailRow {
@@ -47,6 +86,16 @@ interface DetailRow {
   created_by_name: string;
   created_on: string;
   created_time: string;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  issue_date: string | null;
+  due_date: string | null;
+  due_date_source: DueDateSource | null;
+  subtotal: string | null;
+  total: string | null;
+  cae: string | null;
+  notes: string | null;
+  issues: Issue[];
 }
 
 /**
@@ -130,21 +179,38 @@ export class DocumentsService {
   async detail(id: string): Promise<DocumentDetail | null> {
     if (!isUuid(id)) return null;
     const localCreatedAt = Prisma.sql`(d.created_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
-    const [[row], images] = await this.prisma.$transaction(
+    const [[row], images, lines, taxes] = await this.prisma.$transaction(
       [
         this.prisma.$queryRaw<DetailRow[]>`
           SELECT d.id, d.source, d.review_status, d.type, d.letter, d.number,
                  u.name AS created_by_name,
                  to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,
-                 to_char(${localCreatedAt}, 'HH24:MI') AS created_time
+                 to_char(${localCreatedAt}, 'HH24:MI') AS created_time,
+                 d.supplier_id, s.name AS supplier_name,
+                 to_char(d.issue_date, 'YYYY-MM-DD') AS issue_date,
+                 to_char(d.due_date, 'YYYY-MM-DD') AS due_date,
+                 d.due_date_source, d.subtotal::text AS subtotal, d.total::text AS total,
+                 d.cae, d.notes, d.issues
           FROM documents d
           JOIN users u ON u.id = d.created_by
+          LEFT JOIN suppliers s ON s.id = d.supplier_id
           WHERE d.id = ${id}::uuid AND d.deleted_at IS NULL`,
         this.prisma.documentImage.findMany({
           where: { documentId: id },
           orderBy: { position: 'asc' },
           select: { id: true, position: true },
         }),
+        this.prisma.$queryRaw<DocumentLineDetail[]>`
+          SELECT position, product_code AS "productCode", description,
+                 quantity::text AS quantity, unit, package_text AS "packageText",
+                 unit_price::text AS "unitPrice", iva_rate::text AS "ivaRate",
+                 discount_pct::text AS "discountPct", line_total::text AS "lineTotal"
+          FROM document_lines WHERE document_id = ${id}::uuid
+          ORDER BY position`,
+        this.prisma.$queryRaw<DocumentTaxDetail[]>`
+          SELECT kind, label, rate::text AS rate, base::text AS base, amount::text AS amount
+          FROM document_taxes WHERE document_id = ${id}::uuid
+          ORDER BY kind, label, amount, id`,
       ],
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
@@ -160,6 +226,20 @@ export class DocumentsService {
       createdOn: row.created_on,
       createdTime: row.created_time,
       images,
+      supplier:
+        row.supplier_id === null || row.supplier_name === null
+          ? null
+          : { id: row.supplier_id, name: row.supplier_name },
+      issueDate: row.issue_date,
+      dueDate: row.due_date,
+      dueDateSource: row.due_date_source,
+      subtotal: row.subtotal,
+      total: row.total,
+      cae: row.cae,
+      notes: row.notes,
+      issues: row.issues.map((issue) => issue.code),
+      lines,
+      taxes,
     };
   }
 

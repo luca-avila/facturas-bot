@@ -682,9 +682,14 @@ describe('documents', () => {
     const read = (id: string) =>
       withSession(http().get(`/api/documents/${id}`));
 
-    it('returns a manual document, with no images', async () => {
+    it('returns a manual document with its supplier, dates, total, due date and notes, and no images or lines', async () => {
+      const name = `Panadería ${randomUUID()}`;
+      const supplierId = await newSupplier(30, name);
       const id = await enter(
-        invoice(await newSupplier(30), { number: '0003-00000077' }),
+        invoice(supplierId, {
+          number: '0003-00000077',
+          notes: 'Pedido de octubre',
+        }),
       );
       const res = await read(id).expect(200);
       expect(res.body).toEqual({
@@ -699,7 +704,145 @@ describe('documents', () => {
         createdOn: '2026-11-09',
         createdTime: '12:00',
         images: [],
+        supplier: { id: supplierId, name },
+        issueDate: '2026-10-09',
+        dueDate: '2026-11-08',
+        dueDateSource: 'supplier_term',
+        subtotal: null,
+        total: '86900.50',
+        cae: null,
+        notes: 'Pedido de octubre',
+        issues: [],
+        lines: [],
+        taxes: [],
       });
+    });
+
+    it('returns an extracted invoice with its lines by position, at their column scale, and its taxes in order', async () => {
+      const name = `Panadería ${randomUUID()}`;
+      const supplierId = await newSupplier(30, name);
+      const { id } = await prisma.document.create({
+        data: {
+          source: 'upload',
+          reviewStatus: 'error',
+          type: 'invoice',
+          supplierId,
+          letter: 'A',
+          number: '0003-00012345',
+          numberNormalized: '000300012345',
+          issueDate: new Date('2026-10-21T00:00:00Z'),
+          subtotal: '41322.31',
+          total: '50000',
+          cae: '76543210987654',
+          issues: [
+            { code: 'missing_issue_date' },
+            { code: 'duplicate_number' },
+          ],
+          createdById: ana.id,
+          lines: {
+            create: [
+              {
+                position: 2,
+                description: 'Aceite',
+                quantity: '2.5',
+                unitPrice: '10',
+                lineTotal: '25',
+              },
+              {
+                position: 1,
+                productCode: 'H-000',
+                description: 'Harina 000',
+                quantity: '4',
+                unit: 'un',
+                packageText: 'x 25 kg',
+                unitPrice: '6198.35',
+                ivaRate: '21',
+                lineTotal: '24793.4',
+              },
+            ],
+          },
+          taxes: {
+            create: [
+              { kind: 'iibb_perception', label: 'Perc. IIBB', amount: '0' },
+              {
+                kind: 'iva',
+                label: 'IVA 21%',
+                rate: '21',
+                base: '41322.31',
+                amount: '8677.69',
+              },
+              {
+                kind: 'iva',
+                label: 'IVA 10,5%',
+                rate: '10.5',
+                base: '100',
+                amount: '10.5',
+              },
+            ],
+          },
+        },
+      });
+      const body = (await read(id).expect(200)).body as Record<string, unknown>;
+      expect(body).toMatchObject({
+        reviewStatus: 'error',
+        supplier: { id: supplierId, name },
+        issueDate: '2026-10-21',
+        dueDate: null,
+        dueDateSource: null,
+        subtotal: '41322.31',
+        total: '50000.00',
+        cae: '76543210987654',
+        issues: ['missing_issue_date', 'duplicate_number'],
+      });
+      expect(body.lines).toEqual([
+        {
+          position: 1,
+          productCode: 'H-000',
+          description: 'Harina 000',
+          quantity: '4.000',
+          unit: 'un',
+          packageText: 'x 25 kg',
+          unitPrice: '6198.3500',
+          ivaRate: '21.00',
+          discountPct: null,
+          lineTotal: '24793.40',
+        },
+        {
+          position: 2,
+          productCode: null,
+          description: 'Aceite',
+          quantity: '2.500',
+          unit: null,
+          packageText: null,
+          unitPrice: '10.0000',
+          ivaRate: null,
+          discountPct: null,
+          lineTotal: '25.00',
+        },
+      ]);
+      expect(body.taxes).toEqual([
+        {
+          kind: 'iva',
+          label: 'IVA 10,5%',
+          rate: '10.50',
+          base: '100.00',
+          amount: '10.50',
+        },
+        {
+          kind: 'iva',
+          label: 'IVA 21%',
+          rate: '21.00',
+          base: '41322.31',
+          amount: '8677.69',
+        },
+        {
+          kind: 'iibb_perception',
+          label: 'Perc. IIBB',
+          rate: null,
+          base: null,
+          amount: '0.00',
+        },
+      ]);
     });
 
     it.each([
