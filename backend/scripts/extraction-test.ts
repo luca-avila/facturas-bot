@@ -315,7 +315,12 @@ function judgeByChecks(out: ExtractionOutput, sample: string): Check[] {
     );
   }
 
-  if (out.lines.length === 0) {
+  // Without every line total, the check has no inputs: a delivery note can
+  // list items with no prices.
+  if (
+    out.lines.length === 0 ||
+    out.lines.some((line) => line.lineTotal === null)
+  ) {
     checks.push({ name: 'linesAddUp', verdict: 'skipped' });
   } else {
     const lineSum = sum(out.lines.map((line) => line.lineTotal));
