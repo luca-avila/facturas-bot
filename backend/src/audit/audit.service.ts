@@ -53,9 +53,28 @@ export class AuditService {
   }
 
   async record(tx: Prisma.TransactionClient, entry: AuditEntry): Promise<void> {
+    await this.insert(tx, entry.userId, entry);
+  }
+
+  /**
+   * An entry with no `user_id`, for a change the worker made (D2). Only
+   * `src/extraction/` calls it: every other entry has a user.
+   */
+  async recordByWorker(
+    tx: Prisma.TransactionClient,
+    entry: Omit<AuditEntry, 'userId'>,
+  ): Promise<void> {
+    await this.insert(tx, null, entry);
+  }
+
+  private async insert(
+    tx: Prisma.TransactionClient,
+    userId: string | null,
+    entry: Omit<AuditEntry, 'userId'>,
+  ): Promise<void> {
     await tx.$executeRaw`
       INSERT INTO audit_log (user_id, entity, entity_id, action, before, after)
-      VALUES (${entry.userId}::uuid, ${entry.entity}, ${entry.entityId}::uuid,
+      VALUES (${userId}::uuid, ${entry.entity}, ${entry.entityId}::uuid,
               ${entry.action}, ${entry.before}::jsonb, ${entry.after}::jsonb)`;
   }
 }
