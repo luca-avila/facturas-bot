@@ -299,6 +299,14 @@ describe('ExtractionWriter: writing the result', () => {
       expect(await codes(id)).toEqual(['duplicate_number']);
     });
 
+    it('is still a duplicate when neither has a letter', async () => {
+      await known(30);
+      await first({ letter: null });
+      h.advance(1000);
+      const id = await first({ letter: null });
+      expect(await codes(id)).toEqual(['duplicate_number']);
+    });
+
     it('is no duplicate when the other document is deleted', async () => {
       await known(30);
       const other = await first();
