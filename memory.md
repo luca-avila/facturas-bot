@@ -10,3 +10,4 @@ Format: `- YYYY-MM-DD | rule or category | what was wrong`
 - 2026-11-24 | security | UPLOAD_DIR accepted any absolute path, including one inside the repo that the Vite dev server shares on the local network with --host
 - 2026-11-25 | E2 | The fence was tested only against a late success: a stalled worker's late failed attempt, which would requeue a job another run had already finished, had no test
 - 2026-11-25 | dedup | No test showed that two documents with no letter read and the same number are duplicates, the NULLS NOT DISTINCT case a misread remito hits
+- 2026-11-25 | docs | UploadsService's comment still called it the only writer of extraction_jobs after the worker started updating them
