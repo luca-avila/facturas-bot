@@ -54,6 +54,12 @@ const MONEY = 'src/common/money.ts';
 const CLOCK = 'src/common/clock.ts';
 const SPEC = 'src/common/clock.spec.ts';
 const APPLICATIONS = 'src/applications/applications.service.ts';
+const UPLOADS = 'src/uploads/uploads.service.ts';
+const DOCUMENTS = 'src/documents/documents.service.ts';
+const EXTRACTION = 'src/extraction/extraction-writer.ts';
+const WRITERS = [APPLICATIONS, UPLOADS, DOCUMENTS, EXTRACTION];
+/** A spec inside a writer directory, whose own config block it must override. */
+const UPLOADS_SPEC = 'src/uploads/uploads.spec.ts';
 
 const floatCode = {
   parseFloat: "export const x = parseFloat('1.5');\n",
@@ -109,6 +115,72 @@ const applicationReads = {
   '{ application: rows }': 'export const f = (rows: unknown[]) => ({ application: rows });\n',
   'SELECT … FOR UPDATE OF applications':
     'export const f = () => tx.$queryRaw`SELECT id FROM applications WHERE document_id = ${1} FOR UPDATE OF applications`;\n',
+};
+
+const documentImageWrites = {
+  'tx.documentImage.create(…)': 'export const f = () => tx.documentImage.create({ data: {} });\n',
+  'a nested images: { create }':
+    'export const f = () => tx.document.create({ data: { images: { create: [] } } });\n',
+  'raw INSERT INTO document_images':
+    'export const f = () => tx.$executeRaw`INSERT INTO document_images (position) VALUES (${1})`;\n',
+  'raw delete from "document_images"':
+    "export const f = () => tx.$executeRawUnsafe('delete from \"document_images\"');\n",
+};
+
+const extractionJobCreates = {
+  'tx.extractionJob.create(…)': 'export const f = () => tx.extractionJob.create({ data: {} });\n',
+  'a nested extractionJobs: { create }':
+    'export const f = () => tx.document.update({ where: {}, data: { extractionJobs: { create: {} } } });\n',
+  'raw INSERT INTO extraction_jobs':
+    'export const f = () => tx.$executeRaw`INSERT INTO extraction_jobs (status) VALUES (${1})`;\n',
+  'raw insert into public.extraction_jobs':
+    "export const f = () => tx.$executeRawUnsafe('insert into public.extraction_jobs (status) values (1)');\n",
+};
+
+const extractionJobChanges = {
+  'tx.extractionJob.update(…)': 'export const f = () => tx.extractionJob.update({ where: {}, data: {} });\n',
+  'a nested extractionJobs: { updateMany }':
+    'export const f = () => tx.document.update({ where: {}, data: { extractionJobs: { updateMany: {} } } });\n',
+  'raw UPDATE extraction_jobs':
+    'export const f = () => tx.$executeRaw`UPDATE extraction_jobs SET status = ${1}`;\n',
+  'raw DELETE FROM extraction_jobs':
+    "export const f = () => tx.$executeRawUnsafe('DELETE FROM extraction_jobs');\n",
+};
+
+const lineAndTaxWrites = {
+  'tx.documentLine.createMany(…)': 'export const f = () => tx.documentLine.createMany({ data: [] });\n',
+  'tx.documentTax.deleteMany(…)': 'export const f = () => tx.documentTax.deleteMany({ where: {} });\n',
+  'a nested lines: { create }':
+    'export const f = () => tx.document.update({ where: {}, data: { lines: { create: [] } } });\n',
+  'a nested taxes: { deleteMany }':
+    'export const f = () => tx.document.update({ where: {}, data: { taxes: { deleteMany: {} } } });\n',
+  'raw INSERT INTO document_lines':
+    'export const f = () => tx.$executeRaw`INSERT INTO document_lines (position) VALUES (${1})`;\n',
+  'raw UPDATE "public".document_taxes':
+    "export const f = () => tx.$executeRawUnsafe('UPDATE \"public\".document_taxes SET amount = 1');\n",
+};
+
+/** Each table's write cases, and the files that may make them. */
+const tableWrites = [
+  { table: 'document_images', owners: [UPLOADS], cases: documentImageWrites },
+  { table: 'extraction_jobs creates', owners: [UPLOADS, DOCUMENTS], cases: extractionJobCreates },
+  { table: 'extraction_jobs updates and deletes', owners: [EXTRACTION], cases: extractionJobChanges },
+  { table: 'document_lines and document_taxes', owners: [EXTRACTION], cases: lineAndTaxWrites },
+];
+
+const tableReads = {
+  'tx.documentImage.findMany(…)': 'export const f = () => tx.documentImage.findMany({ where: {} });\n',
+  'tx.extractionJob.findFirst(…)': 'export const f = () => tx.extractionJob.findFirst({ where: {} });\n',
+  'include: { images: { orderBy } }':
+    "export const f = () => tx.document.findUnique({ where: {}, include: { images: { orderBy: { position: 'asc' } } } });\n",
+  '_count: { select: { lines: true, taxes: true } }':
+    'export const f = () => tx.document.findUnique({ where: {}, select: { _count: { select: { lines: true, taxes: true } } } });\n',
+  '{ lines: [], taxes: [] }': 'export const f = () => ({ lines: [], taxes: [] });\n',
+  'SELECT … FROM extraction_jobs … FOR UPDATE SKIP LOCKED':
+    'export const f = () => tx.$queryRaw`SELECT id FROM extraction_jobs WHERE status = ${1} FOR UPDATE SKIP LOCKED`;\n',
+  'SELECT … FROM document_images':
+    "export const f = () => tx.$queryRawUnsafe('SELECT sha256 FROM document_images');\n",
+  'raw UPDATE documents': 'export const f = () => tx.$executeRaw`UPDATE documents SET review_status = ${1}`;\n',
 };
 
 describe('backend lint bans', () => {
@@ -170,10 +242,46 @@ describe('backend lint bans', () => {
     });
   });
 
+  describe.each(tableWrites)('$table', ({ owners, cases }) => {
+    const others = [MAIN, CLOCK, ...WRITERS.filter((file) => !owners.includes(file))];
+
+    it.each(Object.entries(cases))('%s is an error outside its writers', async (_, code) => {
+      for (const file of others) {
+        expect([file, await banErrors(file, code)]).toEqual([file, ['no-restricted-syntax']]);
+      }
+    });
+
+    it.each(Object.entries(cases))('%s is allowed in its writers and in spec files', async (_, code) => {
+      for (const file of [...owners, SPEC, UPLOADS_SPEC]) {
+        expect([file, await banErrors(file, code)]).toEqual([file, []]);
+      }
+    });
+  });
+
+  describe('table reads', () => {
+    it.each(Object.entries(tableReads))('%s is allowed anywhere', async (_, code) => {
+      expect(await banErrors(MAIN, code)).toEqual([]);
+    });
+
+    it('keeps the clock ban in every writer directory', async () => {
+      for (const file of WRITERS) {
+        expect([file, await banErrors(file, clockCode['new Date()'])]).toEqual([file, ['no-restricted-syntax']]);
+      }
+    });
+  });
+
   // An entry no case needs can be deleted, or broken, with every case still
   // passing. Each entry must be the only one that catches some error case.
   describe('coverage', () => {
-    const errorCases = { ...floatCode, ...clockCode, ...applicationWrites };
+    const errorCases = {
+      ...floatCode,
+      ...clockCode,
+      ...applicationWrites,
+      ...documentImageWrites,
+      ...extractionJobCreates,
+      ...extractionJobChanges,
+      ...lineAndTaxWrites,
+    };
 
     it('every ban entry outside the exceptions has an error case that needs it', async () => {
       const entries = await banEntries(MAIN);
