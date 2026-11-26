@@ -97,6 +97,7 @@ function Documento() {
   const [notice, setNotice] = useState<string | null>(null)
   const key = `${id}\n${attempt}`
 
+  // Reloads with the document, so a term saved here reaches `supplierTermDays`.
   useEffect(() => {
     let current = true
     void listSuppliers({ q: '', sort: 'name' }).then((result) => {
@@ -105,7 +106,7 @@ function Documento() {
     return () => {
       current = false
     }
-  }, [])
+  }, [attempt])
 
   useEffect(() => {
     let current = true

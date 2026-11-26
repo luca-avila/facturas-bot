@@ -22,8 +22,8 @@ Orientation for coding agents working in this repo.
 - `backend/src/documents/due-date.ts`: `resolveDueDate`, the only due-date rule (D4).
 - `frontend/src/labels.ts`: every Spanish label for an enum or error code, as exhaustive `Record`s.
 - `frontend/src/format.ts`: formats amounts as strings, never as numbers.
-- `backend/src/uploads/`: `UploadsService` is the only writer of `document_images`, and creates `extraction_jobs`. It takes `ADVISORY_LOCKS.uploads` before the same-image check. `ImageStore` is the only code that touches `UPLOAD_DIR`, and it writes bytes as they arrive (E5). `ImageStoreModule` shares `ImageStore` with the worker.
-- `backend/src/extraction/`: the worker. `ExtractionCall` is the only code that sends anything to Anthropic. `ExtractionWorker` and `ExtractionWriter` are the only writers of `document_lines` and `document_taxes`, and of `extraction_jobs` after an upload creates them. `prompt.ts` holds the prompt, schema, effort and `max_tokens`: changing any of them bumps `PROMPT_VERSION` (E4). `backend/src/worker.ts` is the worker's own process.
+- `backend/src/uploads/`: `UploadsService` is the only writer of `document_images`, and creates `extraction_jobs`, as `DocumentsService.retry` does. It takes `ADVISORY_LOCKS.uploads` before the same-image check. `ImageStore` is the only code that touches `UPLOAD_DIR`, and it writes bytes as they arrive (E5). `ImageStoreModule` shares `ImageStore` with the worker.
+- `backend/src/extraction/`: the worker. `ExtractionCall` is the only code that sends anything to Anthropic. `ExtractionWorker` and `ExtractionWriter` are the only writers of `document_lines` and `document_taxes`, and update `extraction_jobs` after an upload or a retry creates them. `prompt.ts` holds the prompt, schema, effort and `max_tokens`: changing any of them bumps `PROMPT_VERSION` (E4). `backend/src/worker.ts` is the worker's own process.
 - `backend/src/documents/issues.ts`: every issue code, in stored order.
 - `backend/src/common/advisory-locks.ts`: every advisory lock key.
 - `frontend/src/photos.ts`: the only place for compression settings, a one-way door.

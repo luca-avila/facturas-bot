@@ -10,5 +10,4 @@ Format: `- YYYY-MM-DD | rule or category | what was wrong`
 - 2026-11-24 | security | UPLOAD_DIR accepted any absolute path, including one inside the repo that the Vite dev server shares on the local network with --host
 - 2026-11-25 | docs | UploadsService's comment still called it the only writer of extraction_jobs after the worker started updating them
 - 2026-11-25 | logic | Documento kept dueDateSource='supplier_term' when switching to a supplier without a payment term, showing 'Se calcula al guardar' instead of prompting for a due date
-- 2026-11-25 | logic | AResolver fetched the supplier list only on mount, so Elegir proveedor kept stale paymentTermDays after defining a supplier's term in the same screen
 - 2026-11-25 | tests | Discarding an Error document via DELETE /api/documents/:id and checking it drops from GET /api/error-documents was not explicitly tested
