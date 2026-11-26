@@ -1,4 +1,4 @@
-import { addDays, isIsoDate, toDbDate } from './dates.js';
+import { addDays, diffDays, isIsoDate, toDbDate } from './dates.js';
 
 describe('isIsoDate', () => {
   it.each([
@@ -40,5 +40,19 @@ describe('toDbDate', () => {
     expect(toDbDate('2026-11-09').toISOString()).toBe(
       '2026-11-09T00:00:00.000Z',
     );
+  });
+});
+
+describe('diffDays', () => {
+  it.each([
+    ['2026-11-09', '2026-11-09', 0],
+    ['2026-01-31', '2026-03-02', 30],
+    ['2028-02-28', '2028-02-29', 1],
+    ['2026-12-15', '2027-01-14', 30],
+    ['2026-11-10', '2026-11-09', -1],
+  ])('%s -> %s = %i', (from, to, expected) => {
+    const result = diffDays(from, to);
+    expect(result).toBe(expected);
+    expect(Object.is(result, -0)).toBe(false);
   });
 });

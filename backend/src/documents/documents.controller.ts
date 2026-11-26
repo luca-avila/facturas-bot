@@ -7,10 +7,14 @@ import {
   NotFoundException,
   Param,
   Post,
+  Put,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { SessionUser } from '../auth/session.js';
-import { parseDocumentInput } from './document-input.js';
+import {
+  parseDocumentInput,
+  parseUpdateDocumentInput,
+} from './document-input.js';
 import { type DocumentDetail, DocumentsService } from './documents.service.js';
 
 @Controller('documents')
@@ -30,6 +34,34 @@ export class DocumentsController {
     const doc = await this.documents.detail(id);
     if (doc === null) throw new NotFoundException();
     return doc;
+  }
+
+  @Put(':id')
+  @HttpCode(204)
+  async update(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: SessionUser,
+  ): Promise<void> {
+    await this.documents.update(id, parseUpdateDocumentInput(body), user);
+  }
+
+  @Post(':id/review')
+  @HttpCode(204)
+  async review(
+    @Param('id') id: string,
+    @CurrentUser() user: SessionUser,
+  ): Promise<void> {
+    await this.documents.review(id, user);
+  }
+
+  @Post(':id/retry')
+  @HttpCode(204)
+  async retry(
+    @Param('id') id: string,
+    @CurrentUser() user: SessionUser,
+  ): Promise<void> {
+    await this.documents.retry(id, user);
   }
 
   @Delete(':id')

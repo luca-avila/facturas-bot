@@ -6,7 +6,7 @@ import { resolveDueDate } from '../documents/due-date.js';
 import type { IssueCode } from '../documents/issues.js';
 import { Prisma, type ReviewStatus } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { DuplicateNumberCheck } from './duplicate-number-check.js';
+import { DuplicateNumberCheck } from '../documents/duplicate-number-check.js';
 import type { CallOutcome } from './extraction-call.js';
 import {
   checkExtraction,

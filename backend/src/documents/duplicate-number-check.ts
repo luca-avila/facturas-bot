@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '../generated/prisma/client.js';
 
-/** The document being written is `processing`, so it never matches itself. */
+/** Another document with the same counted identity, excluding `documentId`. */
 export interface DuplicateNumberQuery {
   documentId: string;
   supplierId: string;
@@ -25,7 +25,8 @@ export class DuplicateNumberCheck {
     const [row] = await tx.$queryRaw<{ exists: boolean }[]>`
       SELECT EXISTS (
         SELECT 1 FROM documents
-        WHERE supplier_id = ${query.supplierId}::uuid
+        WHERE id <> ${query.documentId}::uuid
+          AND supplier_id = ${query.supplierId}::uuid
           AND type = ${query.type}::document_type
           AND letter IS NOT DISTINCT FROM ${query.letter}
           AND number_normalized = ${query.numberNormalized}

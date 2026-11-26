@@ -252,8 +252,8 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 **Rules.**
 - Now:
-  - Saving runs the checks again. If they pass, the document becomes `reviewed`, with `reviewed_by` and `reviewed_at` set to whoever saved it (invariant 8).
-  - A `reviewed` document never goes back to `error`, so a save that would leave a blocking issue is rejected. For `unreviewed` documents, see [question 2](#open-questions).
+  - Saving runs the checks again, and on an `error` document (including *Elegir proveedor*) requires every blocking issue to pass. If they pass, the document becomes `reviewed`, with `reviewed_by` and `reviewed_at` set to whoever saved it (invariant 8).
+  - Neither `unreviewed` nor `reviewed` ever goes back to `error`, so a save that would leave a blocking issue is rejected.
   - Each blocking code has a way out:
     - choose the supplier
     - set the term: the app suggests one from `raw_output`, and before a person confirms it, a backend preview shows the due dates it would give. Saving re-checks the supplier's documents in *Error*, and the ones that pass become *Sin revisar*
@@ -388,6 +388,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
    - Answered: an invoice or delivery note with a typed due date earlier than its issue date is refused with `due_date_before_issue`. That catches a mistyped year, such as 2025 for 2026, which would make the document overdue at once. Opening balances are exempt: the overdue one is often typed with the cutover date as its issue date and a past due date.
    - Should manual entry check `duplicate_suspected` once slice 7 adds it? The proposal is a warning in the form that asks whether to save anyway, not a new status.
 2. **A failed re-check on *Sin revisar*** (slice 6). If saving leaves a blocking issue, does the document go to `error`, or is the save rejected? The document may already have applications. In `error`, it drops out of the balance while the payments applied to it stay used up.
+   - Answered: the save is rejected with field errors, just like on a `reviewed` document. Neither `unreviewed` nor `reviewed` ever goes back to `error`. Saving an `error` document (including via *Elegir proveedor*) also requires every blocking issue to pass before becoming `reviewed`.
 3. **Changing money after the fact** (slice 3). Can a payment be edited or deleted once it's applied? Can an application be removed or changed, given the table has no `deleted_at` or `updated_at`? Does invariant 6 also protect a credit note that has already given credit? Slice 3 ships without these actions until this is answered.
    - Answered: invariant 6 protects both sides of an application. A credit note or a payment that has given credit can't be deleted or change supplier, and can't drop below what it gave. Editing and deleting payments and removing applications stay open.
 4. **Applying existing credit** (slice 3). Answered: from the *Crédito a favor* card in *Proveedor*, with the same split as *Pagos*.
@@ -401,6 +402,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
     - After an edit, does an accepted issue that still triggers stay accepted?
     - Answered: a corrected issue date recomputes the due date with the term the document was created with, not the supplier's current one.
 11. **Re-extraction** (slice 6). Retry is planned only for `extraction_failed`, which has no data to overwrite. Is re-extracting a document that already has data part of the MVP? It's a one-way door.
+    - Answered: out of the MVP. *Reintentar* is strictly for `upload` documents in `error` with `extraction_failed` and no extracted data.
 12. **Filters and search** (slices 2 and 3). Answered: search and sort in *Resumen* (slice 2), the payment-status filter in *Proveedor* and the supplier filter in *Pagos* (slice 3), and *Mías* or *Todas* in *Subidas* (slice 4). See [Screens](../system-design.md#screens).
 13. **Opening balances** (slices 2 and 3).
     - Answered: "up to two per supplier" is how they're meant to be used, not a rule. Nothing enforces it: a unique index can't tell the overdue one from the one that isn't, since only their due dates differ, and they're typed in once, at the start.

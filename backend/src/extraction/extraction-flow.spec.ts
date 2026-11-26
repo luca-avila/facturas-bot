@@ -17,8 +17,11 @@ describe('extraction flow, over HTTP and the worker', () => {
 
   beforeAll(async () => {
     await h.start();
-    await h.freeCuits(EXTRACTION_FLOW_CUITS);
     await h.at(NOW);
+  });
+
+  beforeEach(async () => {
+    await h.freeCuits(EXTRACTION_FLOW_CUITS);
   });
 
   afterAll(async () => {
@@ -113,7 +116,69 @@ describe('extraction flow, over HTTP and the worker', () => {
       .body as SupplierAccount;
     expect(paid.notDue).toBe('30000.00');
 
-    // Re-checking the first document is slice 6.
+    // Re-checking the first document via POST /api/suppliers/:id/term unblocks it.
     expect((await h.document(first)).review_status).toBe('error');
+
+    const termRes = await h
+      .post(`/api/suppliers/${supplierId}/term`, { paymentTermDays: 30 })
+      .expect(200);
+    expect(termRes.body).toMatchObject({
+      paymentTermDays: 30,
+      unblockedCount: 1,
+    });
+    expect((await h.document(first)).review_status).toBe('unreviewed');
+    expect((await h.document(first)).due_date).toBe('2026-11-20');
+
+    const afterUnblock = (
+      await h.get(`/api/suppliers/${supplierId}`).expect(200)
+    ).body as SupplierAccount;
+    expect(afterUnblock.documents.map((d) => d.id)).toEqual([first, second]);
+    expect(afterUnblock.overdue).toBe('50000.00');
+    expect(afterUnblock.notDue).toBe('30000.00');
+    expect(afterUnblock.balance).toBe('80000.00');
+  });
+
+  it('does not deadlock when setTerm runs alongside a processing job of the same supplier', async () => {
+    const cuit = EXTRACTION_FLOW_CUITS[0];
+    const name = `Concurrente ${randomUUID()}`;
+    const supplierId = await h.supplier(name, cuit, null);
+
+    const errorDoc = await h.prisma.document.create({
+      data: {
+        source: 'upload',
+        reviewStatus: 'error',
+        type: 'invoice',
+        supplierId,
+        letter: 'A',
+        number: '0005-00000001',
+        numberNormalized: '000500000001',
+        issueDate: new Date('2026-10-01'),
+        total: '1000.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        createdById: h.ana.id,
+      },
+    });
+    const processingDoc = await h.upload();
+    const held = h.fake.hold(
+      invoiceOutput({
+        supplierCuit: cuit,
+        supplierName: name,
+        number: '0005-00000002',
+      }),
+    );
+    const workerPromise = h.runOnce(processingDoc);
+    await held.received;
+    held.release();
+
+    const [workerOk, termRes] = await Promise.all([
+      workerPromise,
+      h.post(`/api/suppliers/${supplierId}/term`, { paymentTermDays: 30 }),
+    ]);
+    expect(workerOk).toBe(true);
+    expect(termRes.status).toBe(200);
+    expect((await h.document(errorDoc.id)).review_status).toBe('unreviewed');
+    expect(['unreviewed', 'error']).toContain(
+      (await h.document(processingDoc)).review_status,
+    );
   });
 });

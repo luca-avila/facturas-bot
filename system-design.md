@@ -68,9 +68,9 @@ flowchart LR
 | `reviewed` | Revisado | A person confirmed it, or typed it in | Yes |
 
 - Manual documents start as `reviewed`, by the person who typed them in.
-- Saving an edit runs the checks again. If they pass, or the remaining issues are accepted, the document becomes `reviewed`, by the person who saved it.
+- Saving an edit runs the checks again. If they pass, or the remaining issues are accepted, the document becomes `reviewed`, by the person who saved it. Saving an `error` document requires every blocking issue to be resolved (partial fixes are rejected).
 - `reviewed_by` and `reviewed_at` always hold the last person who confirmed the data, and when.
-- `reviewed` never goes back to `error`.
+- Neither `unreviewed` nor `reviewed` ever goes back to `error`: an edit that would leave a blocking issue is rejected.
 - The UI marks *Sin revisar* quietly. It blocks nothing: these documents can take payments as usual.
 - `error` documents can't take payments, because their supplier or total may still change.
 - The balance excludes `error` documents, so the dashboard always warns how many there are and how much they add up to.
@@ -375,9 +375,9 @@ Where the wireframes differ from this file on purpose:
 - **Subidas (4g):** *Procesando* documents stay listed after 7 days.
 - **Subir (4a, 4b, 4f):** a button opens the phone's own camera, since a camera view inside the page needs HTTPS. Pages move with ↑ and ↓ instead of dragging. An upload that was already there opens its document with a notice, instead of a screen of its own.
 - **Subidas (4g):** rows have no thumbnail. The server never makes smaller copies (E5), and loading every full photo would spend the phone's data.
-- **A resolver (6a–6c):** no thumbnails, no actions and no grouping until slice 6, and each row shows the upload date, since an unreadable document has no other. No counter in the navigation yet.
+- **A resolver (6a–6c):** no thumbnails (E5 and mobile data), and each row shows the upload date, since an unreadable document has no other. No counter in the navigation yet.
 - **Resumen (2a):** only the *Error* warning above the totals, no line per supplier yet.
-- **Documento (5b, 5c, 5h):** *Datos* and *Foto* tabs at every width, and no payment section yet.
+- **Documento (5b, 5c, 5h):** *Datos* and *Foto* tabs at every width, and no *Pagos aplicados* card yet.
 
 ## Operations
 

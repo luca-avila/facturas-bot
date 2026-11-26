@@ -1,0 +1,36 @@
+## Qué hace este cambio
+Antes: los documentos en *Error* y *Sin revisar* no se podían editar, confirmar, reintentar ni destrabar definiendo el plazo del proveedor; *A resolver* solo listaba errores sin acciones y *Documento* era de solo lectura.
+Ahora: desde *A resolver* y *Documento* se puede editar la cabecera (o cargar a mano y confirmar *Sin revisar* como *Revisado*), reintentar lecturas fallidas sin datos, descartar documentos y definir el plazo de un proveedor con previsualización en vivo y sugerencia tomada del documento. Al definir el plazo, los documentos en *Error* de ese proveedor que solo esperaban el plazo pasan a *Sin revisar*.
+
+## Cómo funciona
+1. Al leer *A resolver* o *Documento*, el backend calcula una sugerencia de plazo (`0..365` días) desde el `raw_output` del último job exitoso (`printedTermDays` o `printedDueDate - issueDate` en UTC), sin guardarla hasta confirmar; en *Documento* también lee lo aplicado (`appliedAmount`) y datos de revisión dentro de una misma transacción `RepeatableRead`: `suggestTermDays` (backend/src/documents/due-date.ts), `BalancesService.errorRows` (backend/src/balances/balances.service.ts), `DocumentsService.detail` (backend/src/documents/documents.service.ts).
+2. *A resolver* agrupa arriba en tarjetas a los proveedores con 2 o más documentos esperando plazo (`supplier_term_missing`) bajo un único botón *Definir plazo* (sugiriendo el plazo solo si todos los del grupo coinciden), y deja el resto en la lista con acciones en línea (*Definir plazo*, *Elegir proveedor*, *Reintentar*, *Cargar a mano*, *Descartar*): `groupResolverDocuments` (frontend/src/screens/resolver-groups.ts), `AResolver` (frontend/src/screens/AResolver.tsx).
+3. *Definir plazo* consulta los vencimientos que daría el plazo (`POST /api/suppliers/:id/term/preview`) y al confirmar (`POST /api/suppliers/:id/term`) bloquea primero al proveedor y luego solo sus documentos `error` no borrados con `supplier_term_missing` (nunca `processing`, evitando deadlocks con el worker), pasa a *Sin revisar* los que quedan sin errores, registra auditoría con `userId` y reintenta una vez si el índice único `documents_number_unique` detecta un duplicado concurrente: `SuppliersService.previewTerm`, `SuppliersService.setTerm`, `evaluateTerm` (backend/src/suppliers/suppliers.service.ts), `TermSheet` (frontend/src/screens/TermSheet.tsx).
+4. Al guardar cambios de cabecera o asignar proveedor (`PUT /api/documents/:id`), la transacción bloquea la fila con `audit.snapshot`, rechaza `processing` (`409 not_editable`), impide cambios que violen pagos o créditos aplicados (`assertDocumentChange`), preserva el plazo original (`diffDays(oldIssueDate, oldDueDate)`) si cambia `issueDate` en `supplier_term`, verifica duplicados y deja el documento en `reviewed` con `issues: []` sin tocar `cae`, ítems, impuestos ni `raw_output`: `DocumentsService.update`, `resolveUpdateDueDate` (backend/src/documents/documents.service.ts), `parseUpdateDocumentInput` (backend/src/documents/document-input.ts).
+5. Confirmar un documento *Sin revisar* sin editarlo (`POST /api/documents/:id/review`) lo marca como `reviewed` con el usuario actual; tanto *Sin revisar* como *Revisado* rechazan cualquier guardado inválido sin volver nunca a `error`: `DocumentsService.review` (backend/src/documents/documents.service.ts), `Documento` (frontend/src/screens/Documento.tsx).
+6. Reintentar (`POST /api/documents/:id/retry`) solo acepta subidas en `error` con `extraction_failed` y sin campos, ítems ni impuestos extraídos: vuelve a `processing`, encola un nuevo `extraction_jobs` conservando el historial previo y registra auditoría con `userId`: `DocumentsService.retry` (backend/src/documents/documents.service.ts).
+
+## Decisiones que tomó el código
+- Las ediciones inválidas sobre *Sin revisar* se rechazan con errores de campo en lugar de volver a *Error*, para no sacar del saldo documentos que ya puedan tener pagos aplicados.
+- *Reintentar* exige `extraction_failed` sin datos extraídos y deja fuera de MVP re-extraer documentos con datos, para no sobrescribir correcciones humanas (puerta de un solo sentido).
+- `DuplicateNumberCheck` pasó de `extraction/` a `documents/` (excluyendo `id <> documentId`) para compartir la verificación de invariante 7 sin que `AppModule` importe `ExtractionModule`.
+- La sugerencia de plazo (`suggestTermDays`) nunca se aplica automáticamente: solo precarga el campo de *Definir plazo* cuando todos los documentos del grupo coinciden o en un documento individual.
+- Esta revisión ajustó `Documento` para limpiar `dueDateSource: 'supplier_term'` al elegir otro proveedor sin plazo, `AResolver` para refrescar la lista de proveedores tras guardar un plazo, y agregó cobertura de descarte en `error-documents.spec.ts`.
+
+## Qué prueban los tests
+- Transiciones permitidas y rechazadas en `PUT /api/documents/:id`, `POST /review` y `POST /retry` (rechazos en `processing`, `opening_balance` bloqueado en subidas y preservación de `cae`, ítems, impuestos y `raw_output`).
+- Reglas de vencimiento e invariantes 6 y 7 al editar: preservación del plazo original al editar `issueDate`, cambios `supplier_term` ↔ `manual`, `due_date_before_issue`, saldos iniciales, notas de crédito y protección bidireccional de documentos con aplicaciones.
+- *Definir plazo*: coincidencia exacta entre preview y guardado, desbloqueo a `unreviewed`, conservación de otros errores, duplicados en lote, reintento ante `P2002` y concurrencia con `setTerm` y con el worker sobre `processing`.
+- Lecturas extendidas (`appliedAmount`, `reviewedByName`, `suggestedTermDays`), descarte de documentos en *Error* desde `DELETE /api/documents/:id`, rollback ante fallo de auditoría, `401` sin sesión en las 5 rutas nuevas y helpers puros (`dates`, `suggestTermDays`, `resolver-groups`, `document-edit`).
+- Sin cubrir: tests de DOM o componentes React en `TermSheet`, `AResolver` y `Documento`, igual que en slices anteriores; toda regla de negocio se verifica en backend contra Postgres y en helpers puros.
+
+## Cómo probarlo a mano
+1. En *A resolver*, abrí *Definir plazo* sobre un proveedor con documentos en `supplier_term_missing`, probá distintos plazos viendo los vencimientos en vivo y guardá para verificar que pasen a *Sin revisar*.
+2. Abrí el documento en *Documento*, confirmalo con *Marcar como revisado*, luego editá `issueDate` y guardá para comprobar que conserva su plazo original y muestra *Revisado por*.
+3. Sobre una subida con `extraction_failed` sin datos, probá *Reintentar* (vuelve a *Procesando* con un nuevo job), *Cargar a mano* y *Descartar* desde *A resolver* o *Documento*.
+
+## Merge danger
+- Door: two-way. No agrega migraciones, no envía datos fuera del sistema ni re-extrae documentos con datos, y todas las escrituras validan invariantes 6, 7 y 8 con auditoría transaccional.
+- Blast radius: un fallo en la evaluación o bloqueo de `setTerm` o `DocumentsService.update` podría dejar un documento contado con vencimiento o número duplicado erróneos o alterar un documento con aplicaciones (respaldado igualmente por los triggers de Postgres); afecta solo a los documentos editados y se revierte corrigiendo el código.
+- Look closely at: N/A (two-way door)
+- Open questions: Ninguna.

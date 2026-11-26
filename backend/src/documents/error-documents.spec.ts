@@ -107,6 +107,7 @@ describe('GET /api/error-documents', () => {
         // 02:00 UTC is still the 7th in Buenos Aires.
         createdOn: '2026-11-07',
         issues: ['extraction_failed'],
+        suggestedTermDays: null,
       },
       {
         id: newer,
@@ -119,6 +120,7 @@ describe('GET /api/error-documents', () => {
         createdByName: 'Martín',
         createdOn: '2026-11-08',
         issues: ['supplier_term_missing'],
+        suggestedTermDays: null,
       },
     ]);
   });
@@ -128,5 +130,76 @@ describe('GET /api/error-documents', () => {
     const result = await list();
     expect(result.summary).toEqual(summarizeErrors(result.documents));
     expect(result.summary.count).toBeGreaterThan(0);
+  });
+
+  it('includes suggestedTermDays from the latest succeeded extraction job', async () => {
+    const supplier = await prisma.supplier.create({
+      data: { name: `Term ${randomUUID()}`, paymentTermDays: null },
+    });
+    const id = await upload('2026-11-10T13:00:00Z', {
+      type: 'invoice',
+      supplierId: supplier.id,
+      issueDate: new Date('2026-11-01T00:00:00Z'),
+      total: '1200',
+      issues: [{ code: 'supplier_term_missing' }],
+    });
+    await prisma.extractionJob.createMany({
+      data: [
+        {
+          documentId: id,
+          status: 'succeeded',
+          attempts: 1,
+          runAfter: new Date('2026-11-10T13:00:00Z'),
+          model: 'claude-haiku-5-5',
+          promptVersion: '1',
+          rawOutput: { printedTermDays: 15 },
+          createdAt: new Date('2026-11-10T13:00:01Z'),
+        },
+        {
+          documentId: id,
+          status: 'succeeded',
+          attempts: 1,
+          runAfter: new Date('2026-11-10T13:01:00Z'),
+          model: 'claude-haiku-5-5',
+          promptVersion: '1',
+          rawOutput: { printedDueDate: '2026-12-01' },
+          createdAt: new Date('2026-11-10T13:01:01Z'),
+        },
+        {
+          documentId: id,
+          status: 'failed',
+          attempts: 1,
+          runAfter: new Date('2026-11-10T13:02:00Z'),
+          rawOutput: { printedTermDays: 90 },
+          createdAt: new Date('2026-11-10T13:02:01Z'),
+        },
+      ],
+    });
+
+    const { documents } = await list();
+    expect(documents.find((doc) => doc.id === id)?.suggestedTermDays).toBe(30);
+  });
+
+  it('drops an Error document from the list after DELETE and audits the delete', async () => {
+    const id = await upload('2026-11-10T14:00:00Z', {
+      type: 'invoice',
+      total: '750.00',
+      issues: [{ code: 'unsupported_document' }],
+    });
+    expect((await list()).documents.map((d) => d.id)).toContain(id);
+
+    await request(app.getHttpServer())
+      .delete(`/api/documents/${id}`)
+      .set('Cookie', `session=${session}`)
+      .expect(204);
+
+    expect((await list()).documents.map((d) => d.id)).not.toContain(id);
+    const stored = await prisma.document.findUniqueOrThrow({ where: { id } });
+    expect(stored.deletedAt).not.toBeNull();
+    const auditLogs = await prisma.auditLog.findMany({
+      where: { entity: 'documents', entityId: id, action: 'delete' },
+    });
+    expect(auditLogs).toHaveLength(1);
+    expect(auditLogs[0].userId).toBe(ana.id);
   });
 });

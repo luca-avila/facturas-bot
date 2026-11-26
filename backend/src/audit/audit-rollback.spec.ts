@@ -295,4 +295,86 @@ describe('a failing audit write rolls back the change', () => {
     expect(await prisma.application.count({ where: { documentId } })).toBe(0);
     expect(audit.entities).toEqual(['payments', 'applications']);
   });
+
+  it('updating a document returns 500 and keeps the old fields', async () => {
+    audit.failOn = 'documents';
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const documentId = await newInvoice(supplierId);
+    await http()
+      .put(`/api/documents/${documentId}`)
+      .set('Cookie', `session=${session}`)
+      .send({
+        supplierId,
+        type: 'invoice',
+        letter: 'A',
+        number: '0001-00000001',
+        issueDate: '2026-10-09',
+        dueDate: null,
+        dueDateSource: 'supplier_term',
+        subtotal: null,
+        total: '250.00',
+        notes: 'cambiado',
+      })
+      .expect(500);
+    const row = await prisma.document.findUniqueOrThrow({
+      where: { id: documentId },
+    });
+    expect(row.total?.toString()).toBe('100');
+    expect(row.notes).toBeNull();
+    expect(await prisma.auditLog.count({ where: { entityId: documentId } })).toBe(0);
+  });
+
+  it('reviewing a document returns 500 and leaves it unreviewed', async () => {
+    audit.failOn = 'documents';
+    const { id: supplierId } = await prisma.supplier.create({
+      data: { name: `Panadería ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const { id: documentId } = await prisma.document.create({
+      data: {
+        source: 'upload',
+        reviewStatus: 'unreviewed',
+        type: 'credit_note',
+        supplierId,
+        issueDate: new Date('2026-10-09'),
+        total: '100.00',
+        createdById: userId,
+      },
+    });
+    await http()
+      .post(`/api/documents/${documentId}/review`)
+      .set('Cookie', `session=${session}`)
+      .send({})
+      .expect(500);
+    const row = await prisma.document.findUniqueOrThrow({
+      where: { id: documentId },
+    });
+    expect(row.reviewStatus).toBe('unreviewed');
+    expect(row.reviewedById).toBeNull();
+    expect(await prisma.auditLog.count({ where: { entityId: documentId } })).toBe(0);
+  });
+
+  it('retrying a document returns 500 and keeps it in error with no new job', async () => {
+    audit.failOn = 'documents';
+    const { id: documentId } = await prisma.document.create({
+      data: {
+        source: 'upload',
+        reviewStatus: 'error',
+        issues: [{ code: 'extraction_failed' }],
+        createdById: userId,
+      },
+    });
+    await http()
+      .post(`/api/documents/${documentId}/retry`)
+      .set('Cookie', `session=${session}`)
+      .send({})
+      .expect(500);
+    const row = await prisma.document.findUniqueOrThrow({
+      where: { id: documentId },
+    });
+    expect(row.reviewStatus).toBe('error');
+    expect(await prisma.extractionJob.count({ where: { documentId } })).toBe(0);
+    expect(await prisma.auditLog.count({ where: { entityId: documentId } })).toBe(0);
+  });
 });
