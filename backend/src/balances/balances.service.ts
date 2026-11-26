@@ -26,6 +26,7 @@ import type {
   SupplierSort,
 } from './balances.types.js';
 import { summarizeErrors } from './error-summary.js';
+import { suggestTermDays } from '../documents/due-date.js';
 import type { Issue } from '../documents/issues.js';
 
 interface SupplierSumsRow {
@@ -53,6 +54,7 @@ interface ErrorRow {
   created_by_name: string;
   created_on: string;
   issues: Issue[];
+  raw_output: unknown;
 }
 
 function toErrorDocument(row: ErrorRow): ErrorDocumentRow {
@@ -70,6 +72,7 @@ function toErrorDocument(row: ErrorRow): ErrorDocumentRow {
     createdByName: row.created_by_name,
     createdOn: row.created_on,
     issues: row.issues.map((issue) => issue.code),
+    suggestedTermDays: suggestTermDays(row.raw_output, row.issue_date),
   };
 }
 
@@ -498,10 +501,18 @@ export class BalancesService {
              to_char(d.issue_date, 'YYYY-MM-DD') AS issue_date, d.total::text AS total,
              u.name AS created_by_name,
              to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,
-             d.issues
+             d.issues,
+             lj.raw_output
       FROM documents d
       JOIN users u ON u.id = d.created_by
       LEFT JOIN suppliers s ON s.id = d.supplier_id
+      LEFT JOIN LATERAL (
+        SELECT j.raw_output
+        FROM extraction_jobs j
+        WHERE j.document_id = d.id AND j.status = 'succeeded'
+        ORDER BY j.created_at DESC, j.id DESC
+        LIMIT 1
+      ) lj ON true
       WHERE d.deleted_at IS NULL AND d.review_status = 'error'
       ORDER BY d.created_at, d.id`;
   }

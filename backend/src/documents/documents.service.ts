@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { ApplicationsService } from '../applications/applications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
+import { BalancesService } from '../balances/balances.service.js';
 import { BUSINESS_TIME_ZONE, now } from '../common/clock.js';
 import { toDbDate } from '../common/dates.js';
 import { conflict, invalidRequest } from '../common/field-errors.js';
@@ -18,7 +19,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { normalizeNumber } from './document-number.js';
 import type { ManualDocumentFields } from './document-input.js';
-import { resolveDueDate } from './due-date.js';
+import { resolveDueDate, suggestTermDays } from './due-date.js';
 import type { Issue, IssueCode } from './issues.js';
 
 /** Invariant 7. Only this index means a duplicate document number. */
@@ -36,15 +37,20 @@ export interface DocumentDetail {
   /** YYYY-MM-DD and HH:MM of created_at in Buenos Aires. */
   createdOn: string;
   createdTime: string;
+  reviewedByName: string | null;
+  reviewedOn: string | null;
+  reviewedTime: string | null;
   /** By position. Empty for a manual document. */
   images: { id: string; position: number }[];
-  supplier: { id: string; name: string } | null;
+  supplier: { id: string; name: string; paymentTermDays: number | null } | null;
   issueDate: string | null;
   dueDate: string | null;
   dueDateSource: DueDateSource | null;
   /** Amounts and quantities keep their column's scale. */
   subtotal: string | null;
   total: string | null;
+  appliedAmount: string;
+  suggestedTermDays: number | null;
   cae: string | null;
   notes: string | null;
   /** Codes, in stored order. */
@@ -86,8 +92,12 @@ interface DetailRow {
   created_by_name: string;
   created_on: string;
   created_time: string;
+  reviewed_by_name: string | null;
+  reviewed_on: string | null;
+  reviewed_time: string | null;
   supplier_id: string | null;
   supplier_name: string | null;
+  supplier_payment_term_days: number | null;
   issue_date: string | null;
   due_date: string | null;
   due_date_source: DueDateSource | null;
@@ -108,6 +118,7 @@ export class DocumentsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly applications: ApplicationsService,
+    private readonly balances: BalancesService,
   ) {}
 
   /** Saves a document a person typed in. It counts at once, as reviewed by them. */
@@ -179,68 +190,102 @@ export class DocumentsService {
   async detail(id: string): Promise<DocumentDetail | null> {
     if (!isUuid(id)) return null;
     const localCreatedAt = Prisma.sql`(d.created_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
-    const [[row], images, lines, taxes] = await this.prisma.$transaction(
-      [
-        this.prisma.$queryRaw<DetailRow[]>`
+    const localReviewedAt = Prisma.sql`(d.reviewed_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const [row] = await tx.$queryRaw<DetailRow[]>`
           SELECT d.id, d.source, d.review_status, d.type, d.letter, d.number,
-                 u.name AS created_by_name,
+                 cu.name AS created_by_name,
                  to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,
                  to_char(${localCreatedAt}, 'HH24:MI') AS created_time,
+                 ru.name AS reviewed_by_name,
+                 to_char(${localReviewedAt}, 'YYYY-MM-DD') AS reviewed_on,
+                 to_char(${localReviewedAt}, 'HH24:MI') AS reviewed_time,
                  d.supplier_id, s.name AS supplier_name,
+                 s.payment_term_days AS supplier_payment_term_days,
                  to_char(d.issue_date, 'YYYY-MM-DD') AS issue_date,
                  to_char(d.due_date, 'YYYY-MM-DD') AS due_date,
                  d.due_date_source, d.subtotal::text AS subtotal, d.total::text AS total,
                  d.cae, d.notes, d.issues
           FROM documents d
-          JOIN users u ON u.id = d.created_by
+          JOIN users cu ON cu.id = d.created_by
+          LEFT JOIN users ru ON ru.id = d.reviewed_by
           LEFT JOIN suppliers s ON s.id = d.supplier_id
-          WHERE d.id = ${id}::uuid AND d.deleted_at IS NULL`,
-        this.prisma.documentImage.findMany({
+          WHERE d.id = ${id}::uuid AND d.deleted_at IS NULL`;
+        if (row === undefined) return null;
+
+        const images = await tx.documentImage.findMany({
           where: { documentId: id },
           orderBy: { position: 'asc' },
           select: { id: true, position: true },
-        }),
-        this.prisma.$queryRaw<DocumentLineDetail[]>`
+        });
+        const lines = await tx.$queryRaw<DocumentLineDetail[]>`
           SELECT position, product_code AS "productCode", description,
                  quantity::text AS quantity, unit, package_text AS "packageText",
                  unit_price::text AS "unitPrice", iva_rate::text AS "ivaRate",
                  discount_pct::text AS "discountPct", line_total::text AS "lineTotal"
           FROM document_lines WHERE document_id = ${id}::uuid
-          ORDER BY position`,
-        this.prisma.$queryRaw<DocumentTaxDetail[]>`
+          ORDER BY position`;
+        const taxes = await tx.$queryRaw<DocumentTaxDetail[]>`
           SELECT kind, label, rate::text AS rate, base::text AS base, amount::text AS amount
           FROM document_taxes WHERE document_id = ${id}::uuid
-          ORDER BY kind, label, amount, id`,
-      ],
+          ORDER BY kind, label, amount, id`;
+        const applied = await this.balances.documentApplied(tx, id);
+        const latestSucceeded = await tx.extractionJob.findFirst({
+          where: { documentId: id, status: 'succeeded' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { rawOutput: true },
+        });
+
+        const appliedAmount =
+          applied === null
+            ? '0.00'
+            : (row.type === 'credit_note'
+                ? applied.given
+                : applied.received
+              ).toString();
+
+        return {
+          id: row.id,
+          source: row.source,
+          reviewStatus: row.review_status,
+          type: row.type,
+          letter: row.letter,
+          number: row.number,
+          createdByName: row.created_by_name,
+          createdOn: row.created_on,
+          createdTime: row.created_time,
+          reviewedByName: row.reviewed_by_name,
+          reviewedOn: row.reviewed_on,
+          reviewedTime: row.reviewed_time,
+          images,
+          supplier:
+            row.supplier_id === null || row.supplier_name === null
+              ? null
+              : {
+                  id: row.supplier_id,
+                  name: row.supplier_name,
+                  paymentTermDays: row.supplier_payment_term_days,
+                },
+          issueDate: row.issue_date,
+          dueDate: row.due_date,
+          dueDateSource: row.due_date_source,
+          subtotal: row.subtotal,
+          total: row.total,
+          appliedAmount,
+          suggestedTermDays: suggestTermDays(
+            latestSucceeded?.rawOutput ?? null,
+            row.issue_date,
+          ),
+          cae: row.cae,
+          notes: row.notes,
+          issues: row.issues.map((issue) => issue.code),
+          lines,
+          taxes,
+        };
+      },
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
-    if (row === undefined) return null;
-    return {
-      id: row.id,
-      source: row.source,
-      reviewStatus: row.review_status,
-      type: row.type,
-      letter: row.letter,
-      number: row.number,
-      createdByName: row.created_by_name,
-      createdOn: row.created_on,
-      createdTime: row.created_time,
-      images,
-      supplier:
-        row.supplier_id === null || row.supplier_name === null
-          ? null
-          : { id: row.supplier_id, name: row.supplier_name },
-      issueDate: row.issue_date,
-      dueDate: row.due_date,
-      dueDateSource: row.due_date_source,
-      subtotal: row.subtotal,
-      total: row.total,
-      cae: row.cae,
-      notes: row.notes,
-      issues: row.issues.map((issue) => issue.code),
-      lines,
-      taxes,
-    };
   }
 
   /**

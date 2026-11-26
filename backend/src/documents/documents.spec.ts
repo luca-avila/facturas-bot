@@ -703,13 +703,18 @@ describe('documents', () => {
         // NOW is 12:00 in Buenos Aires.
         createdOn: '2026-11-09',
         createdTime: '12:00',
+        reviewedByName: 'Ana',
+        reviewedOn: '2026-11-09',
+        reviewedTime: '12:00',
         images: [],
-        supplier: { id: supplierId, name },
+        supplier: { id: supplierId, name, paymentTermDays: 30 },
         issueDate: '2026-10-09',
         dueDate: '2026-11-08',
         dueDateSource: 'supplier_term',
         subtotal: null,
         total: '86900.50',
+        appliedAmount: '0.00',
+        suggestedTermDays: null,
         cae: null,
         notes: 'Pedido de octubre',
         issues: [],
@@ -785,12 +790,17 @@ describe('documents', () => {
       const body = (await read(id).expect(200)).body as Record<string, unknown>;
       expect(body).toMatchObject({
         reviewStatus: 'error',
-        supplier: { id: supplierId, name },
+        reviewedByName: null,
+        reviewedOn: null,
+        reviewedTime: null,
+        supplier: { id: supplierId, name, paymentTermDays: 30 },
         issueDate: '2026-10-21',
         dueDate: null,
         dueDateSource: null,
         subtotal: '41322.31',
         total: '50000.00',
+        appliedAmount: '0.00',
+        suggestedTermDays: null,
         cae: '76543210987654',
         issues: ['missing_issue_date', 'duplicate_number'],
       });
@@ -887,6 +897,62 @@ describe('documents', () => {
       const id = await enter(invoice(await newSupplier(30)));
       await remove(id).expect(204);
       await read(id).expect(404);
+    });
+
+    it('includes appliedAmount for invoices and credit notes, and suggestedTermDays from the latest succeeded job', async () => {
+      const supplierId = await newSupplier(null);
+      const invId = await enter(
+        invoice(supplierId, {
+          dueDate: '2026-11-08',
+          total: '1000.00',
+        }),
+      );
+      const cnId = await enter({
+        supplierId,
+        type: 'credit_note',
+        letter: 'A',
+        number: '0003-00000099',
+        issueDate: '2026-10-10',
+        dueDate: null,
+        total: '400.00',
+        notes: null,
+      });
+      await prisma.application.create({
+        data: {
+          creditNoteId: cnId,
+          documentId: invId,
+          amount: '250.00',
+        },
+      });
+      await prisma.extractionJob.create({
+        data: {
+          documentId: invId,
+          status: 'succeeded',
+          attempts: 1,
+          runAfter: new Date(NOW),
+          model: 'claude-haiku-5-5',
+          promptVersion: '1',
+          rawOutput: { printedTermDays: 45 },
+        },
+      });
+
+      const invBody = (await read(invId).expect(200)).body as Record<
+        string,
+        unknown
+      >;
+      expect(invBody).toMatchObject({
+        appliedAmount: '250.00',
+        suggestedTermDays: 45,
+        reviewedByName: 'Ana',
+      });
+      const cnBody = (await read(cnId).expect(200)).body as Record<
+        string,
+        unknown
+      >;
+      expect(cnBody).toMatchObject({
+        appliedAmount: '250.00',
+        suggestedTermDays: null,
+      });
     });
   });
 });

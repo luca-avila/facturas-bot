@@ -220,6 +220,9 @@ describe('uploads', () => {
         createdByName: 'Ana',
         createdOn: '2026-11-18',
         createdTime: '23:30',
+        reviewedByName: null,
+        reviewedOn: null,
+        reviewedTime: null,
         images: [
           { id: images[0].id, position: 1 },
           { id: images[1].id, position: 2 },
@@ -230,6 +233,8 @@ describe('uploads', () => {
         dueDateSource: null,
         subtotal: null,
         total: null,
+        appliedAmount: '0.00',
+        suggestedTermDays: null,
         cae: null,
         notes: null,
         issues: [],

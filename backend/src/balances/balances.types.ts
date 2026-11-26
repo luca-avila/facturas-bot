@@ -177,6 +177,7 @@ export interface ErrorDocumentRow {
   createdOn: string;
   /** Codes, in stored order. */
   issues: IssueCode[];
+  suggestedTermDays: number | null;
 }
 
 export interface ErrorDocumentList {
