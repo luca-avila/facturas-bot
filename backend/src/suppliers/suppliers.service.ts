@@ -1,17 +1,23 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
+import { ADVISORY_LOCKS } from '../common/advisory-locks.js';
 import { toDbDate } from '../common/dates.js';
 import { conflict } from '../common/field-errors.js';
+import { Money } from '../common/money.js';
 import { uniqueViolationIndex } from '../common/unique-violation.js';
 import { isUuid } from '../common/uuid.js';
 import { normalizeNumber } from '../documents/document-number.js';
 import { resolveDueDate } from '../documents/due-date.js';
 import { DuplicateNumberCheck } from '../documents/duplicate-number-check.js';
+import { DuplicateSuspectedCheck } from '../documents/duplicate-suspected-check.js';
 import {
-  ISSUE_CODES,
-  type Issue,
+  isAcceptedIssue,
+  normalizeStoredIssues,
+  openIssueCodes,
+  sortStoredIssues,
   type IssueCode,
+  type StoredIssue,
 } from '../documents/issues.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -44,7 +50,17 @@ interface TermCandidateRow {
   number: string | null;
   number_normalized: string | null;
   issue_date: string | null;
-  issues: Issue[];
+  total: string | null;
+  issues: unknown;
+}
+
+interface EvaluatedTermDocument extends TermPreviewDocument {
+  storedIssues: StoredIssue[];
+}
+
+interface EvaluatedTerm {
+  preview: TermPreview;
+  evaluated: EvaluatedTermDocument[];
 }
 
 /** Writes suppliers. Every write leaves an `audit_log` entry in its transaction (D2). */
@@ -54,6 +70,7 @@ export class SuppliersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly duplicateCheck: DuplicateNumberCheck,
+    private readonly duplicateSuspectedCheck: DuplicateSuspectedCheck,
   ) {}
 
   async create(
@@ -118,7 +135,13 @@ export class SuppliersService {
           select: { id: true },
         });
         if (supplier === null) throw new NotFoundException();
-        return this.evaluateTerm(tx, id, paymentTermDays, new Set());
+        const { preview } = await this.evaluateTerm(
+          tx,
+          id,
+          paymentTermDays,
+          new Set(),
+        );
+        return preview;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
     );
@@ -126,8 +149,9 @@ export class SuppliersService {
 
   /**
    * Sets `payment_term_days` and re-checks only this supplier's non-deleted
-   * `error` documents that have `supplier_term_missing`. Locks supplier first,
-   * then only `error` rows in `id` order so the worker never deadlocks (C1).
+   * `error` documents that have `supplier_term_missing`. Takes
+   * `ADVISORY_LOCKS.documentDuplicates` first, then locks supplier, then only
+   * `error` rows in `id` order so the worker never deadlocks (C1).
    */
   async setTerm(
     id: string,
@@ -140,6 +164,8 @@ export class SuppliersService {
       let currentDocumentId: string | null = null;
       try {
         return await this.prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCKS.documentDuplicates})`;
+
           const supplierBefore = await this.audit.snapshot(tx, 'suppliers', id);
           if (supplierBefore === null) throw new NotFoundException();
 
@@ -166,14 +192,14 @@ export class SuppliersService {
             ORDER BY id
             FOR UPDATE`;
 
-          const preview = await this.evaluateTerm(
+          const { preview, evaluated } = await this.evaluateTerm(
             tx,
             id,
             paymentTermDays,
             forcedDuplicateIds,
           );
 
-          for (const doc of preview.documents) {
+          for (const doc of evaluated) {
             currentDocumentId = doc.id;
             const before = await this.audit.snapshot(tx, 'documents', doc.id);
             if (before === null) continue;
@@ -182,7 +208,7 @@ export class SuppliersService {
               data: {
                 dueDate: doc.dueDate === null ? null : toDbDate(doc.dueDate),
                 dueDateSource: doc.dueDate === null ? null : 'supplier_term',
-                issues: doc.remainingIssues.map((code) => ({ code })),
+                issues: doc.storedIssues as unknown as Prisma.InputJsonValue,
                 reviewStatus: doc.willUnblock ? 'unreviewed' : 'error',
                 reviewedById: null,
                 reviewedAt: null,
@@ -221,10 +247,11 @@ export class SuppliersService {
     supplierId: string,
     paymentTermDays: number,
     forcedDuplicateIds: ReadonlySet<string>,
-  ): Promise<TermPreview> {
+  ): Promise<EvaluatedTerm> {
     const rows = await tx.$queryRaw<TermCandidateRow[]>`
       SELECT d.id, d.type, d.letter, d.number, d.number_normalized,
              to_char(d.issue_date, 'YYYY-MM-DD') AS issue_date,
+             d.total::text AS total,
              d.issues
       FROM documents d
       WHERE d.supplier_id = ${supplierId}::uuid
@@ -235,7 +262,12 @@ export class SuppliersService {
       ORDER BY d.created_at ASC, d.id ASC`;
 
     const unblockedKeys = new Set<string>();
-    const documents: TermPreviewDocument[] = [];
+    const unblockedDocs: {
+      issueDate: string;
+      total: string;
+      hasNumber: boolean;
+    }[] = [];
+    const evaluated: EvaluatedTermDocument[] = [];
     let unblockedCount = 0;
 
     for (const row of rows) {
@@ -252,13 +284,17 @@ export class SuppliersService {
         }
       }
 
-      const issueSet = new Set<IssueCode>(
-        row.issues
-          .map((issue) => issue.code)
-          .filter(
-            (code) =>
-              code !== 'supplier_term_missing' && code !== 'duplicate_number',
-          ),
+      const stored = normalizeStoredIssues(row.issues);
+      const preservedAccepted = new Map(
+        stored.filter(isAcceptedIssue).map((issue) => [issue.code, issue]),
+      );
+      const openSet = new Set<IssueCode>(
+        openIssueCodes(stored).filter(
+          (code) =>
+            code !== 'supplier_term_missing' &&
+            code !== 'duplicate_number' &&
+            code !== 'duplicate_suspected',
+        ),
       );
 
       const normalized =
@@ -280,19 +316,58 @@ export class SuppliersService {
             numberNormalized: normalized,
           })));
       if (isDuplicate) {
-        issueSet.add('duplicate_number');
+        openSet.add('duplicate_number');
       }
 
-      const remainingIssues = ISSUE_CODES.filter((code) => issueSet.has(code));
+      const rowTotal =
+        row.total === null ? null : Money.fromString(row.total).toString();
+      const hasNumber = normalized !== null;
+      if (
+        !preservedAccepted.has('duplicate_suspected') &&
+        row.issue_date !== null &&
+        rowTotal !== null
+      ) {
+        const batchDupSuspected = unblockedDocs.some(
+          (other) =>
+            other.issueDate === row.issue_date &&
+            other.total === rowTotal &&
+            (!hasNumber || !other.hasNumber),
+        );
+        const isDuplicateSuspected =
+          batchDupSuspected ||
+          (await this.duplicateSuspectedCheck.findMatch(tx, {
+            documentId: row.id,
+            supplierId,
+            issueDate: row.issue_date,
+            total: rowTotal,
+            hasNumber,
+          })) !== null;
+        if (isDuplicateSuspected) {
+          openSet.add('duplicate_suspected');
+        }
+      }
+
+      const storedIssues = sortStoredIssues([
+        ...preservedAccepted.values(),
+        ...[...openSet].map((code): StoredIssue => ({ code })),
+      ]);
+      const remainingIssues = openIssueCodes(storedIssues);
       const willUnblock = remainingIssues.length === 0;
       if (willUnblock) {
         unblockedCount += 1;
         if (numberKey !== null) {
           unblockedKeys.add(numberKey);
         }
+        if (row.issue_date !== null && rowTotal !== null) {
+          unblockedDocs.push({
+            issueDate: row.issue_date,
+            total: rowTotal,
+            hasNumber,
+          });
+        }
       }
 
-      documents.push({
+      evaluated.push({
         id: row.id,
         type: row.type,
         letter: row.letter,
@@ -301,10 +376,27 @@ export class SuppliersService {
         dueDate,
         willUnblock,
         remainingIssues,
+        storedIssues,
       });
     }
 
-    return { paymentTermDays, documents, unblockedCount };
+    return {
+      preview: {
+        paymentTermDays,
+        documents: evaluated.map((doc) => ({
+          id: doc.id,
+          type: doc.type,
+          letter: doc.letter,
+          number: doc.number,
+          issueDate: doc.issueDate,
+          dueDate: doc.dueDate,
+          willUnblock: doc.willUnblock,
+          remainingIssues: doc.remainingIssues,
+        })),
+        unblockedCount,
+      },
+      evaluated,
+    };
   }
 
   private async mapCuitTaken<T>(write: () => Promise<T>): Promise<T> {

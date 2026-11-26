@@ -744,5 +744,180 @@ describe('suppliers', () => {
       expect(finalDoc.reviewStatus).toBe('unreviewed');
       expect([30, 45]).toContain(finalSupplier.paymentTermDays);
     });
+
+    it('keeps error when an open acceptable issue remains, and unblocks preserving accepted issue metadata', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      const acceptedAt = '2026-11-01T15:00:00.000Z';
+      const openAcceptableId = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0005-00000001',
+        numberNormalized: '000500000001',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        total: '1000.00',
+        issues: [
+          { code: 'supplier_term_missing' },
+          { code: 'totals_mismatch' },
+        ],
+        createdAt: new Date('2026-11-01T10:00:00Z'),
+      });
+      const alreadyAcceptedId = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0005-00000002',
+        numberNormalized: '000500000002',
+        supplierId,
+        issueDate: new Date('2026-10-02'),
+        total: '2000.00',
+        issues: [
+          { code: 'supplier_term_missing' },
+          { code: 'totals_mismatch', acceptedBy: ana.id, acceptedAt },
+        ],
+        createdAt: new Date('2026-11-01T10:05:00Z'),
+      });
+
+      const previewRes = await preview(supplierId, {
+        paymentTermDays: 30,
+      }).expect(200);
+      expect(previewRes.body).toEqual({
+        paymentTermDays: 30,
+        unblockedCount: 1,
+        documents: [
+          expect.objectContaining({
+            id: openAcceptableId,
+            dueDate: '2026-10-31',
+            willUnblock: false,
+            remainingIssues: ['totals_mismatch'],
+          }),
+          expect.objectContaining({
+            id: alreadyAcceptedId,
+            dueDate: '2026-11-01',
+            willUnblock: true,
+            remainingIssues: [],
+          }),
+        ],
+      });
+
+      const saveRes = await setTerm(supplierId, { paymentTermDays: 30 }).expect(
+        200,
+      );
+      expect(saveRes.body).toEqual(previewRes.body);
+
+      const savedOpen = await prisma.document.findUniqueOrThrow({
+        where: { id: openAcceptableId },
+      });
+      expect(savedOpen.reviewStatus).toBe('error');
+      expect(savedOpen.issues).toEqual([{ code: 'totals_mismatch' }]);
+
+      const savedAccepted = await prisma.document.findUniqueOrThrow({
+        where: { id: alreadyAcceptedId },
+      });
+      expect(savedAccepted.reviewStatus).toBe('unreviewed');
+      expect(savedAccepted.issues).toEqual([
+        { code: 'totals_mismatch', acceptedBy: ana.id, acceptedAt },
+      ]);
+    });
+
+    it('unblocks the first of two unnumbered delivery notes waiting on a term and flags the second with duplicate_suspected', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      const firstId = await doc({
+        type: 'delivery_note',
+        letter: 'X',
+        number: null,
+        numberNormalized: null,
+        supplierId,
+        issueDate: new Date('2026-10-05'),
+        total: '7500.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        createdAt: new Date('2026-11-01T10:00:00Z'),
+      });
+      const secondId = await doc({
+        type: 'delivery_note',
+        letter: 'X',
+        number: null,
+        numberNormalized: null,
+        supplierId,
+        issueDate: new Date('2026-10-05'),
+        total: '7500.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        createdAt: new Date('2026-11-01T10:05:00Z'),
+      });
+
+      const previewRes = await preview(supplierId, {
+        paymentTermDays: 15,
+      }).expect(200);
+      expect(previewRes.body).toEqual({
+        paymentTermDays: 15,
+        unblockedCount: 1,
+        documents: [
+          expect.objectContaining({
+            id: firstId,
+            willUnblock: true,
+            remainingIssues: [],
+          }),
+          expect.objectContaining({
+            id: secondId,
+            willUnblock: false,
+            remainingIssues: ['duplicate_suspected'],
+          }),
+        ],
+      });
+
+      await setTerm(supplierId, { paymentTermDays: 15 }).expect(200);
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: firstId } }))
+          .reviewStatus,
+      ).toBe('unreviewed');
+      const savedSecond = await prisma.document.findUniqueOrThrow({
+        where: { id: secondId },
+      });
+      expect(savedSecond.reviewStatus).toBe('error');
+      expect(savedSecond.issues).toEqual([{ code: 'duplicate_suspected' }]);
+    });
+
+    it('flags an unnumbered error delivery note with duplicate_suspected when a matching counted document already exists in the DB', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      await doc({
+        reviewStatus: 'reviewed',
+        type: 'invoice',
+        letter: 'A',
+        number: '0006-00000001',
+        numberNormalized: '000600000001',
+        supplierId,
+        issueDate: new Date('2026-10-08'),
+        dueDate: new Date('2026-10-23'),
+        dueDateSource: 'manual',
+        total: '8800.00',
+        issues: [],
+        reviewedById: ana.id,
+        reviewedAt: new Date('2026-11-01T09:00:00Z'),
+      });
+      const stuckId = await doc({
+        type: 'delivery_note',
+        letter: 'X',
+        number: null,
+        numberNormalized: null,
+        supplierId,
+        issueDate: new Date('2026-10-08'),
+        total: '8800.00',
+        issues: [{ code: 'supplier_term_missing' }],
+      });
+
+      const res = await setTerm(supplierId, { paymentTermDays: 15 }).expect(
+        200,
+      );
+      expect(res.body).toEqual({
+        paymentTermDays: 15,
+        unblockedCount: 0,
+        documents: [
+          expect.objectContaining({
+            id: stuckId,
+            willUnblock: false,
+            remainingIssues: ['duplicate_suspected'],
+          }),
+        ],
+      });
+    });
   });
 });

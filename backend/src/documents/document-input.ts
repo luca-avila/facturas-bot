@@ -1,4 +1,8 @@
-import { bodyWithKeys, isStringOrNull, optionalText } from '../common/body.js';
+import {
+  bodyWithOptionalKeys,
+  isStringOrNull,
+  optionalText,
+} from '../common/body.js';
 import { isIsoDate } from '../common/dates.js';
 import { type FieldError, invalidRequest } from '../common/field-errors.js';
 import { Money } from '../common/money.js';
@@ -8,6 +12,11 @@ import {
   type DueDateSource,
 } from '../generated/prisma/client.js';
 import { normalizeNumber } from './document-number.js';
+import {
+  isAcceptableIssueCode,
+  isIssueCode,
+  type AcceptableIssueCode,
+} from './issues.js';
 
 /** A manually entered document, checked and trimmed. */
 export interface ManualDocumentFields {
@@ -19,6 +28,7 @@ export interface ManualDocumentFields {
   dueDate: string | null;
   total: Money;
   notes: string | null;
+  allowSuspectedDuplicate: boolean;
 }
 
 /** An edited document header (`PUT /api/documents/:id`), checked and trimmed. */
@@ -33,6 +43,7 @@ export interface UpdateDocumentFields {
   subtotal: Money | null;
   total: Money;
   notes: string | null;
+  acceptIssues: AcceptableIssueCode[];
 }
 
 const KEYS = [
@@ -105,8 +116,17 @@ function readSubtotal(subtotal: string): Money | null {
  * in the transaction.
  */
 export function parseDocumentInput(body: unknown): ManualDocumentFields {
-  const raw = bodyWithKeys(body, KEYS);
-  const { supplierId, type, letter, issueDate, dueDate, total, notes } = raw;
+  const raw = bodyWithOptionalKeys(body, KEYS, ['allowSuspectedDuplicate']);
+  const {
+    supplierId,
+    type,
+    letter,
+    issueDate,
+    dueDate,
+    total,
+    notes,
+    allowSuspectedDuplicate,
+  } = raw;
   if (
     typeof supplierId !== 'string' ||
     !isUuid(supplierId) ||
@@ -119,7 +139,11 @@ export function parseDocumentInput(body: unknown): ManualDocumentFields {
     typeof issueDate !== 'string' ||
     !isStringOrNull(dueDate) ||
     typeof total !== 'string' ||
-    !isStringOrNull(notes)
+    !isStringOrNull(notes) ||
+    !(
+      allowSuspectedDuplicate === undefined ||
+      typeof allowSuspectedDuplicate === 'boolean'
+    )
   ) {
     throw invalidRequest();
   }
@@ -159,6 +183,7 @@ export function parseDocumentInput(body: unknown): ManualDocumentFields {
     dueDate,
     total: money,
     notes: optionalText(notes),
+    allowSuspectedDuplicate: allowSuspectedDuplicate ?? false,
   };
 }
 
@@ -168,7 +193,7 @@ export function parseDocumentInput(body: unknown): ManualDocumentFields {
  * together as field errors.
  */
 export function parseUpdateDocumentInput(body: unknown): UpdateDocumentFields {
-  const raw = bodyWithKeys(body, UPDATE_KEYS);
+  const raw = bodyWithOptionalKeys(body, UPDATE_KEYS, ['acceptIssues']);
   const {
     supplierId: rawSupplierId,
     type,
@@ -179,6 +204,7 @@ export function parseUpdateDocumentInput(body: unknown): UpdateDocumentFields {
     subtotal: rawSubtotal,
     total,
     notes,
+    acceptIssues: rawAcceptIssues,
   } = raw;
   if (
     !isStringOrNull(rawSupplierId) ||
@@ -193,9 +219,25 @@ export function parseUpdateDocumentInput(body: unknown): UpdateDocumentFields {
     !(dueDateSource === null || isDueDateSource(dueDateSource)) ||
     !isStringOrNull(rawSubtotal) ||
     typeof total !== 'string' ||
-    !isStringOrNull(notes)
+    !isStringOrNull(notes) ||
+    !(rawAcceptIssues === undefined || Array.isArray(rawAcceptIssues))
   ) {
     throw invalidRequest();
+  }
+
+  const acceptIssuesSet = new Set<AcceptableIssueCode>();
+  if (rawAcceptIssues !== undefined) {
+    for (const entry of rawAcceptIssues) {
+      if (!isIssueCode(entry)) {
+        throw invalidRequest();
+      }
+      if (!isAcceptableIssueCode(entry)) {
+        throw invalidRequest([
+          { field: 'acceptIssues', code: 'issue_not_acceptable' },
+        ]);
+      }
+      acceptIssuesSet.add(entry);
+    }
   }
 
   const trimmedSupplierId =
@@ -276,5 +318,6 @@ export function parseUpdateDocumentInput(body: unknown): UpdateDocumentFields {
     subtotal: parsedSubtotal,
     total: parsedTotal,
     notes: optionalText(notes),
+    acceptIssues: [...acceptIssuesSet],
   };
 }

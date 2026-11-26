@@ -57,6 +57,7 @@ describe('every route', () => {
         'put /api/documents/:id',
         'post /api/documents/:id/review',
         'post /api/documents/:id/retry',
+        'post /api/documents/:id/issues/:code/accept',
         'delete /api/documents/:id',
         'post /api/applications/preview',
         'post /api/applications',

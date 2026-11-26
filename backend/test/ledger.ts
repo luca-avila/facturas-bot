@@ -94,6 +94,7 @@ export class Ledger {
       dueDate,
       total,
       notes: null,
+      allowSuspectedDuplicate: true,
     });
   }
 
@@ -107,6 +108,7 @@ export class Ledger {
       dueDate: null,
       total,
       notes: null,
+      allowSuspectedDuplicate: true,
     });
   }
 

@@ -64,6 +64,16 @@ export class DocumentsController {
     await this.documents.retry(id, user);
   }
 
+  @Post(':id/issues/:code/accept')
+  @HttpCode(204)
+  async acceptIssue(
+    @Param('id') id: string,
+    @Param('code') code: string,
+    @CurrentUser() user: SessionUser,
+  ): Promise<void> {
+    await this.documents.acceptIssue(id, code, user);
+  }
+
   @Delete(':id')
   @HttpCode(204)
   async delete(

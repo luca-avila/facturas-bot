@@ -3,6 +3,7 @@ import { ApplicationsService } from '../applications/applications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { BalancesService } from '../balances/balances.service.js';
+import { ADVISORY_LOCKS } from '../common/advisory-locks.js';
 import {
   BUSINESS_TIME_ZONE,
   formatBuenosAiresTimestamp,
@@ -23,6 +24,8 @@ import {
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
+  checkLinesMismatch,
+  checkTotalsMismatch,
   summarizeConsistency,
   type ConsistencySummary,
 } from './consistency-checks.js';
@@ -38,12 +41,16 @@ import {
   type SuspectedDuplicateRef,
 } from './duplicate-suspected-check.js';
 import {
+  isAcceptableIssueCode,
   isAcceptedIssue,
+  isIssueCode,
   normalizeStoredIssues,
   openIssueCodes,
+  sortStoredIssues,
   type AcceptableIssueCode,
   type Issue,
   type IssueCode,
+  type StoredIssue,
 } from './issues.js';
 
 /** Invariant 7. Only this index means a duplicate document number. */
@@ -170,6 +177,10 @@ export class DocumentsService {
   ): Promise<{ id: string }> {
     try {
       return await this.prisma.$transaction(async (tx) => {
+        if (input.type !== 'opening_balance') {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCKS.documentDuplicates})`;
+        }
+
         const supplier = await tx.supplier.findUnique({
           where: { id: input.supplierId },
           select: { paymentTermDays: true },
@@ -188,6 +199,50 @@ export class DocumentsService {
           ]);
         }
 
+        const numberNormalized =
+          input.number === null ? null : normalizeNumber(input.number);
+        if (
+          input.type !== 'opening_balance' &&
+          numberNormalized !== null &&
+          (await this.duplicateCheck.exists(tx, {
+            documentId: null,
+            supplierId: input.supplierId,
+            type: input.type,
+            letter: input.letter,
+            numberNormalized,
+          }))
+        ) {
+          throw conflict([{ field: 'number', code: 'duplicate_number' }]);
+        }
+
+        const createdAt = now();
+        const issues: StoredIssue[] = [];
+        if (input.type !== 'opening_balance') {
+          const suspected = await this.duplicateSuspectedCheck.findMatch(tx, {
+            documentId: null,
+            supplierId: input.supplierId,
+            issueDate: input.issueDate,
+            total: input.total.toString(),
+            hasNumber: numberNormalized !== null,
+          });
+          if (suspected !== null) {
+            if (!input.allowSuspectedDuplicate) {
+              throw conflict([
+                {
+                  field: 'document',
+                  code: 'duplicate_suspected',
+                  documentId: suspected.id,
+                },
+              ]);
+            }
+            issues.push({
+              code: 'duplicate_suspected',
+              acceptedBy: user.id,
+              acceptedAt: createdAt.toISOString(),
+            });
+          }
+        }
+
         const { id } = await tx.document.create({
           data: {
             type: input.type,
@@ -196,16 +251,16 @@ export class DocumentsService {
             supplierId: input.supplierId,
             letter: input.letter,
             number: input.number,
-            numberNormalized:
-              input.number === null ? null : normalizeNumber(input.number),
+            numberNormalized,
             issueDate: toDbDate(input.issueDate),
             dueDate: due.dueDate === null ? null : toDbDate(due.dueDate),
             dueDateSource: due.source,
             total: input.total.toString(),
             notes: input.notes,
+            issues: issues as unknown as Prisma.InputJsonValue,
             createdById: user.id,
             reviewedById: user.id,
-            reviewedAt: now(),
+            reviewedAt: createdAt,
           },
           select: { id: true },
         });
@@ -415,9 +470,13 @@ export class DocumentsService {
   }
 
   /**
-   * Edits a document's header fields and marks it `reviewed` in `user`'s name.
-   * Refuses `processing` documents (`409 not_editable`), invariant 6 changes
-   * (`409 document_has_applications`), and duplicate numbers (`409 duplicate_number`).
+   * Edits a document's header fields and re-evaluates blocking and acceptable
+   * checks from scratch without auto-preserving prior acceptances.
+   *
+   * - On `error`: all blocking checks must pass; if acceptable issues trigger
+   *   and aren't listed in `acceptIssues`, saves header edits and stays `error`.
+   * - On `unreviewed`/`reviewed`: never returns to `error`; unaccepted
+   *   acceptable issues return `409` with the triggered codes, writing nothing.
    */
   async update(
     id: string,
@@ -427,6 +486,10 @@ export class DocumentsService {
     if (!isUuid(id)) throw new NotFoundException();
     try {
       await this.prisma.$transaction(async (tx) => {
+        if (input.type !== 'opening_balance') {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCKS.documentDuplicates})`;
+        }
+
         const before = await this.audit.snapshot(tx, 'documents', id);
         if (before === null) throw new NotFoundException();
 
@@ -441,6 +504,7 @@ export class DocumentsService {
             issueDate: true,
             dueDate: true,
             dueDateSource: true,
+            issues: true,
           },
         });
         if (doc === null || doc.deletedAt !== null) {
@@ -506,6 +570,82 @@ export class DocumentsService {
           throw conflict([{ field: 'number', code: 'duplicate_number' }]);
         }
 
+        const storedIssues = normalizeStoredIssues(doc.issues);
+        const lines = await tx.documentLine.findMany({
+          where: { documentId: id },
+          select: { lineTotal: true },
+        });
+        const taxes = await tx.documentTax.findMany({
+          where: { documentId: id },
+          select: { amount: true },
+        });
+
+        const suspectedMatch =
+          input.type === 'opening_balance'
+            ? null
+            : await this.duplicateSuspectedCheck.findMatch(tx, {
+                documentId: id,
+                supplierId: input.supplierId,
+                issueDate: input.issueDate,
+                total: input.total.toString(),
+                hasNumber: numberNormalized !== null,
+              });
+
+        const triggered: AcceptableIssueCode[] = [];
+        if (suspectedMatch !== null) triggered.push('duplicate_suspected');
+        if (
+          checkTotalsMismatch({
+            subtotal: input.subtotal,
+            total: input.total,
+            taxes: taxes.map((tax) => ({
+              amount: Money.fromString(tax.amount.toString()),
+            })),
+          })
+        ) {
+          triggered.push('totals_mismatch');
+        }
+        if (
+          checkLinesMismatch({
+            subtotal: input.subtotal,
+            total: input.total,
+            lines: lines.map((line) => ({
+              lineTotal:
+                line.lineTotal === null
+                  ? null
+                  : Money.fromString(line.lineTotal.toString()),
+            })),
+          })
+        ) {
+          triggered.push('lines_mismatch');
+        }
+        if (storedIssues.some((issue) => issue.code === 'wrong_recipient')) {
+          triggered.push('wrong_recipient');
+        }
+
+        const acceptSet = new Set<AcceptableIssueCode>(input.acceptIssues);
+        const unaccepted = triggered.filter((code) => !acceptSet.has(code));
+
+        if (doc.reviewStatus !== 'error' && unaccepted.length > 0) {
+          throw conflict(
+            unaccepted.map((code) =>
+              code === 'duplicate_suspected' && suspectedMatch !== null
+                ? { field: 'document', code, documentId: suspectedMatch.id }
+                : { field: 'document', code },
+            ),
+          );
+        }
+
+        const savedAt = now();
+        const savedAtIso = savedAt.toISOString();
+        const nextIssues: StoredIssue[] = sortStoredIssues(
+          triggered.map((code) =>
+            acceptSet.has(code)
+              ? { code, acceptedBy: user.id, acceptedAt: savedAtIso }
+              : { code },
+          ),
+        );
+        const promote = unaccepted.length === 0;
+
         await tx.document.update({
           where: { id },
           data: {
@@ -520,10 +660,10 @@ export class DocumentsService {
             subtotal: input.subtotal === null ? null : input.subtotal.toString(),
             total: input.total.toString(),
             notes: input.notes,
-            issues: [],
-            reviewStatus: 'reviewed',
-            reviewedById: user.id,
-            reviewedAt: now(),
+            issues: nextIssues as unknown as Prisma.InputJsonValue,
+            reviewStatus: promote ? 'reviewed' : 'error',
+            reviewedById: promote ? user.id : null,
+            reviewedAt: promote ? savedAt : null,
           },
         });
 
@@ -543,6 +683,146 @@ export class DocumentsService {
       }
       throw error;
     }
+  }
+
+  /**
+   * Explicitly accepts one acceptable issue on an `error` document.
+   * When zero open issues remain, re-checks `duplicate_number` and
+   * (unless already accepted) `duplicate_suspected` under
+   * `ADVISORY_LOCKS.documentDuplicates`; promotes to `reviewed` if clear.
+   */
+  async acceptIssue(
+    id: string,
+    codeParam: string,
+    user: SessionUser,
+  ): Promise<void> {
+    if (!isUuid(id)) throw new NotFoundException();
+    if (!isIssueCode(codeParam)) throw invalidRequest();
+    if (!isAcceptableIssueCode(codeParam)) {
+      throw invalidRequest([{ field: 'code', code: 'issue_not_acceptable' }]);
+    }
+    const code: AcceptableIssueCode = codeParam;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCKS.documentDuplicates})`;
+
+      const before = await this.audit.snapshot(tx, 'documents', id);
+      if (before === null) throw new NotFoundException();
+
+      const doc = await tx.document.findUnique({
+        where: { id },
+        select: {
+          deletedAt: true,
+          reviewStatus: true,
+          type: true,
+          supplierId: true,
+          letter: true,
+          numberNormalized: true,
+          issueDate: true,
+          total: true,
+          issues: true,
+        },
+      });
+      if (doc === null || doc.deletedAt !== null) {
+        throw new NotFoundException();
+      }
+      if (doc.reviewStatus !== 'error') {
+        throw conflict([{ field: 'document', code: 'not_editable' }]);
+      }
+
+      const storedIssues = normalizeStoredIssues(doc.issues);
+      const existing = storedIssues.find((issue) => issue.code === code);
+      if (existing === undefined) {
+        throw conflict([{ field: 'document', code: 'not_editable' }]);
+      }
+      if (isAcceptedIssue(existing)) {
+        return;
+      }
+
+      const acceptedAt = now();
+      const acceptedAtIso = acceptedAt.toISOString();
+      let updatedIssues: StoredIssue[] = sortStoredIssues(
+        storedIssues.map((issue) =>
+          issue.code === code
+            ? { code, acceptedBy: user.id, acceptedAt: acceptedAtIso }
+            : issue,
+        ),
+      );
+
+      let remainingOpen = openIssueCodes(updatedIssues);
+      if (remainingOpen.length === 0) {
+        if (
+          doc.type !== null &&
+          doc.type !== 'opening_balance' &&
+          doc.supplierId !== null &&
+          doc.numberNormalized !== null &&
+          (await this.duplicateCheck.exists(tx, {
+            documentId: id,
+            supplierId: doc.supplierId,
+            type: doc.type,
+            letter: doc.letter,
+            numberNormalized: doc.numberNormalized,
+          }))
+        ) {
+          updatedIssues = sortStoredIssues([
+            ...updatedIssues,
+            { code: 'duplicate_number' },
+          ]);
+        }
+
+        const dupSuspectedAccepted = updatedIssues.some(
+          (issue) =>
+            issue.code === 'duplicate_suspected' && isAcceptedIssue(issue),
+        );
+        if (
+          !dupSuspectedAccepted &&
+          doc.type !== null &&
+          doc.type !== 'opening_balance' &&
+          doc.supplierId !== null &&
+          doc.issueDate !== null &&
+          doc.total !== null &&
+          (await this.duplicateSuspectedCheck.findMatch(tx, {
+            documentId: id,
+            supplierId: doc.supplierId,
+            issueDate: fromDbDate(doc.issueDate),
+            total: Money.fromString(doc.total.toString()).toString(),
+            hasNumber: doc.numberNormalized !== null,
+          })) !== null
+        ) {
+          updatedIssues = sortStoredIssues([
+            ...updatedIssues,
+            { code: 'duplicate_suspected' },
+          ]);
+        }
+
+        remainingOpen = openIssueCodes(updatedIssues);
+      }
+
+      const promote = remainingOpen.length === 0;
+      await tx.document.update({
+        where: { id },
+        data: {
+          issues: updatedIssues as unknown as Prisma.InputJsonValue,
+          ...(promote
+            ? {
+                reviewStatus: 'reviewed',
+                reviewedById: user.id,
+                reviewedAt: acceptedAt,
+              }
+            : {}),
+        },
+      });
+
+      const after = await this.audit.snapshot(tx, 'documents', id);
+      await this.audit.record(tx, {
+        userId: user.id,
+        entity: 'documents',
+        entityId: id,
+        action: 'update',
+        before,
+        after,
+      });
+    });
   }
 
   /** Confirms an `unreviewed` (or idempotently `reviewed`) document as-is. */
