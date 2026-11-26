@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { BalancesService } from '../balances/balances.service.js';
 import { BUSINESS_TIME_ZONE, now } from '../common/clock.js';
-import { toDbDate } from '../common/dates.js';
+import { addDays, diffDays, fromDbDate, toDbDate } from '../common/dates.js';
 import { conflict, invalidRequest } from '../common/field-errors.js';
 import { uniqueViolationIndex } from '../common/unique-violation.js';
 import { isUuid } from '../common/uuid.js';
@@ -18,8 +18,12 @@ import {
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { normalizeNumber } from './document-number.js';
-import type { ManualDocumentFields } from './document-input.js';
+import type {
+  ManualDocumentFields,
+  UpdateDocumentFields,
+} from './document-input.js';
 import { resolveDueDate, suggestTermDays } from './due-date.js';
+import { DuplicateNumberCheck } from './duplicate-number-check.js';
 import type { Issue, IssueCode } from './issues.js';
 
 /** Invariant 7. Only this index means a duplicate document number. */
@@ -119,6 +123,7 @@ export class DocumentsService {
     private readonly audit: AuditService,
     private readonly applications: ApplicationsService,
     private readonly balances: BalancesService,
+    private readonly duplicateCheck: DuplicateNumberCheck,
   ) {}
 
   /** Saves a document a person typed in. It counts at once, as reviewed by them. */
@@ -309,6 +314,269 @@ export class DocumentsService {
         entity: 'documents',
         entityId: id,
         action: 'delete',
+        before,
+        after,
+      });
+    });
+  }
+
+  /**
+   * Edits a document's header fields and marks it `reviewed` in `user`'s name.
+   * Refuses `processing` documents (`409 not_editable`), invariant 6 changes
+   * (`409 document_has_applications`), and duplicate numbers (`409 duplicate_number`).
+   */
+  async update(
+    id: string,
+    input: UpdateDocumentFields,
+    user: SessionUser,
+  ): Promise<void> {
+    if (!isUuid(id)) throw new NotFoundException();
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const before = await this.audit.snapshot(tx, 'documents', id);
+        if (before === null) throw new NotFoundException();
+
+        const doc = await tx.document.findUnique({
+          where: { id },
+          select: {
+            deletedAt: true,
+            source: true,
+            reviewStatus: true,
+            type: true,
+            supplierId: true,
+            issueDate: true,
+            dueDate: true,
+            dueDateSource: true,
+          },
+        });
+        if (doc === null || doc.deletedAt !== null) {
+          throw new NotFoundException();
+        }
+        if (doc.reviewStatus === 'processing') {
+          throw conflict([{ field: 'document', code: 'not_editable' }]);
+        }
+        if (doc.source === 'upload' && input.type === 'opening_balance') {
+          throw invalidRequest();
+        }
+
+        const supplier = await tx.supplier.findUnique({
+          where: { id: input.supplierId },
+          select: { id: true, paymentTermDays: true },
+        });
+        if (supplier === null) throw invalidRequest();
+
+        await this.applications.assertDocumentChange(tx, id, {
+          supplierId: input.supplierId,
+          type: input.type,
+          total: input.total,
+          reviewStatus: 'reviewed',
+        });
+
+        const due = this.resolveUpdateDueDate(doc, input, supplier.paymentTermDays);
+        if (due === 'due_date_required') {
+          throw invalidRequest([
+            { field: 'dueDate', code: 'due_date_required' },
+          ]);
+        }
+
+        const numberNormalized =
+          input.number === null ? null : normalizeNumber(input.number);
+        if (
+          input.type !== 'opening_balance' &&
+          numberNormalized !== null &&
+          (await this.duplicateCheck.exists(tx, {
+            documentId: id,
+            supplierId: input.supplierId,
+            type: input.type,
+            letter: input.letter,
+            numberNormalized,
+          }))
+        ) {
+          throw conflict([{ field: 'number', code: 'duplicate_number' }]);
+        }
+
+        await tx.document.update({
+          where: { id },
+          data: {
+            supplierId: input.supplierId,
+            type: input.type,
+            letter: input.letter,
+            number: input.number,
+            numberNormalized,
+            issueDate: toDbDate(input.issueDate),
+            dueDate: due.dueDate === null ? null : toDbDate(due.dueDate),
+            dueDateSource: due.source,
+            subtotal: input.subtotal === null ? null : input.subtotal.toString(),
+            total: input.total.toString(),
+            notes: input.notes,
+            issues: [],
+            reviewStatus: 'reviewed',
+            reviewedById: user.id,
+            reviewedAt: now(),
+          },
+        });
+
+        const after = await this.audit.snapshot(tx, 'documents', id);
+        await this.audit.record(tx, {
+          userId: user.id,
+          entity: 'documents',
+          entityId: id,
+          action: 'update',
+          before,
+          after,
+        });
+      });
+    } catch (error) {
+      if (uniqueViolationIndex(error) === NUMBER_INDEX) {
+        throw conflict([{ field: 'number', code: 'duplicate_number' }]);
+      }
+      throw error;
+    }
+  }
+
+  private resolveUpdateDueDate(
+    doc: {
+      type: DocumentType | null;
+      supplierId: string | null;
+      issueDate: Date | null;
+      dueDate: Date | null;
+      dueDateSource: DueDateSource | null;
+    },
+    input: UpdateDocumentFields,
+    supplierPaymentTermDays: number | null,
+  ): { dueDate: string | null; source: DueDateSource | null } | 'due_date_required' {
+    if (
+      (input.type === 'invoice' || input.type === 'delivery_note') &&
+      input.dueDateSource === 'supplier_term' &&
+      (doc.type === 'invoice' || doc.type === 'delivery_note') &&
+      doc.dueDateSource === 'supplier_term' &&
+      doc.supplierId === input.supplierId &&
+      doc.issueDate !== null &&
+      doc.dueDate !== null
+    ) {
+      const originalTermDays = diffDays(
+        fromDbDate(doc.issueDate),
+        fromDbDate(doc.dueDate),
+      );
+      return {
+        dueDate: addDays(input.issueDate, originalTermDays),
+        source: 'supplier_term',
+      };
+    }
+    return resolveDueDate({
+      type: input.type,
+      issueDate: input.issueDate,
+      typedDueDate:
+        input.dueDateSource === 'manual' ? input.dueDate : null,
+      paymentTermDays: supplierPaymentTermDays,
+    });
+  }
+
+  /** Confirms an `unreviewed` (or idempotently `reviewed`) document as-is. */
+  async review(id: string, user: SessionUser): Promise<void> {
+    if (!isUuid(id)) throw new NotFoundException();
+    await this.prisma.$transaction(async (tx) => {
+      const before = await this.audit.snapshot(tx, 'documents', id);
+      if (before === null) throw new NotFoundException();
+
+      const doc = await tx.document.findUnique({
+        where: { id },
+        select: { deletedAt: true, reviewStatus: true },
+      });
+      if (doc === null || doc.deletedAt !== null) {
+        throw new NotFoundException();
+      }
+      if (doc.reviewStatus === 'processing' || doc.reviewStatus === 'error') {
+        throw conflict([{ field: 'document', code: 'not_editable' }]);
+      }
+
+      await tx.document.update({
+        where: { id },
+        data: {
+          reviewStatus: 'reviewed',
+          reviewedById: user.id,
+          reviewedAt: now(),
+        },
+      });
+      const after = await this.audit.snapshot(tx, 'documents', id);
+      await this.audit.record(tx, {
+        userId: user.id,
+        entity: 'documents',
+        entityId: id,
+        action: 'update',
+        before,
+        after,
+      });
+    });
+  }
+
+  /**
+   * Queues a fresh extraction job for an `upload` document in `error` with
+   * `extraction_failed` and no extracted data. Keeps earlier job rows.
+   */
+  async retry(id: string, user: SessionUser): Promise<void> {
+    if (!isUuid(id)) throw new NotFoundException();
+    await this.prisma.$transaction(async (tx) => {
+      const before = await this.audit.snapshot(tx, 'documents', id);
+      if (before === null) throw new NotFoundException();
+
+      const doc = await tx.document.findUnique({
+        where: { id },
+        select: {
+          deletedAt: true,
+          source: true,
+          reviewStatus: true,
+          type: true,
+          supplierId: true,
+          issueDate: true,
+          total: true,
+          issues: true,
+          _count: { select: { lines: true, taxes: true } },
+        },
+      });
+      if (doc === null || doc.deletedAt !== null) {
+        throw new NotFoundException();
+      }
+      const issues = Array.isArray(doc.issues)
+        ? (doc.issues as unknown as Issue[])
+        : [];
+      const hasExtractionFailed = issues.some(
+        (issue) => issue.code === 'extraction_failed',
+      );
+      const hasNoData =
+        doc.type === null &&
+        doc.supplierId === null &&
+        doc.issueDate === null &&
+        doc.total === null &&
+        doc._count.lines === 0 &&
+        doc._count.taxes === 0;
+      if (
+        doc.source !== 'upload' ||
+        doc.reviewStatus !== 'error' ||
+        !hasExtractionFailed ||
+        !hasNoData
+      ) {
+        throw conflict([{ field: 'document', code: 'not_editable' }]);
+      }
+
+      await tx.document.update({
+        where: { id },
+        data: { reviewStatus: 'processing', issues: [] },
+      });
+      await tx.extractionJob.create({
+        data: {
+          documentId: id,
+          status: 'queued',
+          attempts: 0,
+          runAfter: now(),
+        },
+      });
+      const after = await this.audit.snapshot(tx, 'documents', id);
+      await this.audit.record(tx, {
+        userId: user.id,
+        entity: 'documents',
+        entityId: id,
+        action: 'update',
         before,
         after,
       });

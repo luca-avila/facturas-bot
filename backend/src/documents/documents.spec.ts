@@ -7,6 +7,10 @@ import {
   signIn,
   type CreatedTestUser,
 } from '../../test/app.js';
+import { invoiceOutput } from '../../test/extraction-outputs.js';
+import { FakeLlm } from '../../test/fake-llm.js';
+import { jpeg } from '../../test/photos.js';
+import { createTestWorker } from '../../test/worker.js';
 import type {
   SupplierAccount,
   SupplierList,
@@ -952,6 +956,859 @@ describe('documents', () => {
       expect(cnBody).toMatchObject({
         appliedAmount: '250.00',
         suggestedTermDays: null,
+      });
+    });
+  });
+
+  describe('PUT /api/documents/:id, POST /review, and POST /retry', () => {
+    const put = (id: string, body: unknown) =>
+      withSession(http().put(`/api/documents/${id}`)).send(body as object);
+    const review = (id: string) =>
+      withSession(http().post(`/api/documents/${id}/review`)).send({});
+    const retry = (id: string) =>
+      withSession(http().post(`/api/documents/${id}/retry`)).send({});
+
+    function editPayload(
+      supplierId: string | null,
+      overrides: Record<string, unknown> = {},
+    ) {
+      return {
+        supplierId,
+        type: 'invoice',
+        letter: 'A',
+        number: '0001-00004521',
+        issueDate: '2026-10-09',
+        dueDate: null,
+        dueDateSource: 'supplier_term',
+        subtotal: null,
+        total: '86900.50',
+        notes: null,
+        ...overrides,
+      };
+    }
+
+    async function createDoc(data: Record<string, unknown>): Promise<string> {
+      const { id } = await prisma.document.create({
+        data: {
+          source: 'upload',
+          reviewStatus: 'error',
+          createdById: ana.id,
+          ...(data as object),
+        } as never,
+      });
+      return id;
+    }
+
+    describe('status transitions (table-driven)', () => {
+      it.each([
+        [
+          'error (missing_total) -> reviewed via PUT',
+          'error',
+          [{ code: 'missing_total' }],
+          (supplierId: string) => editPayload(supplierId, { total: '5000.00' }),
+        ],
+        [
+          'error (supplier_unresolved) -> reviewed via PUT',
+          'error',
+          [{ code: 'supplier_unresolved' }],
+          (supplierId: string) => editPayload(supplierId),
+        ],
+        [
+          'error (supplier_term_missing) -> reviewed via PUT with manual dueDate',
+          'error',
+          [{ code: 'supplier_term_missing' }],
+          (supplierId: string) =>
+            editPayload(supplierId, {
+              dueDate: '2026-11-15',
+              dueDateSource: 'manual',
+            }),
+        ],
+        [
+          'unreviewed -> reviewed via PUT',
+          'unreviewed',
+          [],
+          (supplierId: string) => editPayload(supplierId, { total: '9999.00' }),
+        ],
+        [
+          'reviewed -> reviewed via PUT',
+          'reviewed',
+          [],
+          (supplierId: string) => editPayload(supplierId, { notes: 'actualizado' }),
+        ],
+      ] as const)(
+        'allows %s',
+        async (_, initialStatus, initialIssues, buildBody) => {
+          const supplierId = await newSupplier(30);
+          const secondUser = await createUser(app, { name: 'Beto' });
+          const secondSession = await signIn(app, secondUser);
+          const id = await createDoc({
+            reviewStatus: initialStatus,
+            type: 'invoice',
+            supplierId: initialIssues.some((i) => i.code === 'supplier_unresolved')
+              ? null
+              : supplierId,
+            issueDate: new Date('2026-10-09'),
+            dueDate:
+              initialStatus === 'error' ? null : new Date('2026-11-08'),
+            dueDateSource: initialStatus === 'error' ? null : 'supplier_term',
+            total:
+              initialIssues.some((i) => i.code === 'missing_total')
+                ? null
+                : '86900.50',
+            issues: initialIssues,
+            reviewedById: initialStatus === 'reviewed' ? ana.id : null,
+            reviewedAt: initialStatus === 'reviewed' ? new Date(NOW) : null,
+          });
+
+          await http()
+            .put(`/api/documents/${id}`)
+            .set('Cookie', `session=${secondSession}`)
+            .send(buildBody(supplierId))
+            .expect(204);
+
+          const after = await stored(id);
+          expect(after.reviewStatus).toBe('reviewed');
+          expect(after.reviewedById).toBe(secondUser.id);
+          expect(after.reviewedAt).toEqual(new Date(NOW));
+          expect(after.issues).toEqual([]);
+        },
+      );
+
+      it.each([
+        [
+          'error -> partial PUT missing supplier',
+          'error',
+          null,
+          () => editPayload(null),
+          'supplier_required',
+        ],
+        [
+          'error -> partial PUT empty supplier string',
+          'error',
+          null,
+          () => editPayload(''),
+          'supplier_required',
+        ],
+        [
+          'error -> partial PUT supplier without term and no manual dueDate',
+          'error',
+          null,
+          (supplierId: string) => editPayload(supplierId),
+          'due_date_required',
+        ],
+        [
+          'error -> partial PUT missing total',
+          'error',
+          30,
+          (supplierId: string) => editPayload(supplierId, { total: '' }),
+          'total_invalid',
+        ],
+        [
+          'error -> partial PUT invalid issueDate',
+          'error',
+          30,
+          (supplierId: string) => editPayload(supplierId, { issueDate: '' }),
+          'issue_date_invalid',
+        ],
+        [
+          'unreviewed -> invalid PUT cleared total stays unreviewed',
+          'unreviewed',
+          30,
+          (supplierId: string) => editPayload(supplierId, { total: '0' }),
+          'total_invalid',
+        ],
+        [
+          'unreviewed -> invalid PUT cleared issueDate stays unreviewed',
+          'unreviewed',
+          30,
+          (supplierId: string) => editPayload(supplierId, { issueDate: '' }),
+          'issue_date_invalid',
+        ],
+        [
+          'unreviewed -> invalid PUT supplier without term and no manual dueDate stays unreviewed',
+          'unreviewed',
+          null,
+          (supplierId: string) => editPayload(supplierId),
+          'due_date_required',
+        ],
+        [
+          'reviewed -> invalid PUT cleared total stays reviewed',
+          'reviewed',
+          30,
+          (supplierId: string) => editPayload(supplierId, { total: '' }),
+          'total_invalid',
+        ],
+      ] as const)(
+        'rejects %s and keeps previous status and data',
+        async (_, initialStatus, termDays, buildBody, expectedCode) => {
+          const supplierId = await newSupplier(termDays);
+          const id = await createDoc({
+            reviewStatus: initialStatus,
+            type: 'invoice',
+            supplierId,
+            issueDate: new Date('2026-10-09'),
+            dueDate:
+              initialStatus === 'error' ? null : new Date('2026-11-08'),
+            dueDateSource:
+              initialStatus === 'error'
+                ? null
+                : termDays === null
+                  ? 'manual'
+                  : 'supplier_term',
+            total: '500.00',
+            issues:
+              initialStatus === 'error'
+                ? [{ code: 'supplier_term_missing' }]
+                : [],
+            reviewedById: initialStatus === 'reviewed' ? ana.id : null,
+            reviewedAt: initialStatus === 'reviewed' ? new Date(NOW) : null,
+          });
+
+          const res = await put(id, buildBody(supplierId)).expect(400);
+          expect((res.body as { errors: { code: string }[] }).errors).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ code: expectedCode }),
+            ]),
+          );
+
+          const after = await stored(id);
+          expect(after.reviewStatus).toBe(initialStatus);
+          expect(after.total?.toString()).toBe('500');
+          expect(after.issueDate).toBe('2026-10-09');
+        },
+      );
+
+      it('confirms unreviewed (and idempotently reviewed) via POST /review without changing fields', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({
+          reviewStatus: 'unreviewed',
+          type: 'invoice',
+          supplierId,
+          letter: 'B',
+          number: '0002-00000111',
+          numberNormalized: '000200000111',
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          total: '1234.50',
+          notes: 'original',
+          issues: [],
+        });
+
+        await review(id).expect(204);
+        const after = await stored(id);
+        expect(after).toMatchObject({
+          reviewStatus: 'reviewed',
+          reviewedById: ana.id,
+          reviewedAt: new Date(NOW),
+          notes: 'original',
+          number: '0002-00000111',
+        });
+
+        // Idempotent for a second user
+        const beto = await createUser(app, { name: 'Beto' });
+        const betoSession = await signIn(app, beto);
+        await http()
+          .post(`/api/documents/${id}/review`)
+          .set('Cookie', `session=${betoSession}`)
+          .send({})
+          .expect(204);
+        expect((await stored(id)).reviewedById).toBe(beto.id);
+      });
+
+      it('rejects PUT, POST /review, and POST /retry on processing with 409 not_editable', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({ reviewStatus: 'processing', issues: [] });
+
+        for (const req of [
+          put(id, editPayload(supplierId)),
+          review(id),
+          retry(id),
+        ]) {
+          const res = await req.expect(409);
+          expect(res.body).toEqual({
+            errors: [{ field: 'document', code: 'not_editable' }],
+          });
+        }
+      });
+
+      it('rejects POST /review on error with 409 not_editable', async () => {
+        const id = await createDoc({
+          reviewStatus: 'error',
+          issues: [{ code: 'extraction_failed' }],
+        });
+        const res = await review(id).expect(409);
+        expect(res.body).toEqual({
+          errors: [{ field: 'document', code: 'not_editable' }],
+        });
+      });
+
+      it.each([
+        ['bad UUID', 'nope'],
+        ['unknown UUID', randomUUID()],
+      ])('returns 404 on PUT, /review, and /retry for %s', async (_, id) => {
+        const supplierId = await newSupplier(30);
+        await put(id, editPayload(supplierId)).expect(404);
+        await review(id).expect(404);
+        await retry(id).expect(404);
+      });
+
+      it('returns 404 on PUT, /review, and /retry for a deleted document', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await enter(invoice(supplierId));
+        await remove(id).expect(204);
+        await put(id, editPayload(supplierId)).expect(404);
+        await review(id).expect(404);
+        await retry(id).expect(404);
+      });
+
+      it('rejects opening_balance on upload documents, and allows it on manual documents', async () => {
+        const supplierId = await newSupplier(30);
+        const uploadId = await createDoc({
+          source: 'upload',
+          reviewStatus: 'error',
+          issues: [{ code: 'missing_total' }],
+        });
+        await put(
+          uploadId,
+          editPayload(supplierId, {
+            type: 'opening_balance',
+            letter: null,
+            number: null,
+            dueDate: null,
+            dueDateSource: null,
+          }),
+        ).expect(400);
+
+        const manualId = await enter(invoice(supplierId));
+        await put(
+          manualId,
+          editPayload(supplierId, {
+            type: 'opening_balance',
+            letter: null,
+            number: null,
+            dueDate: '2026-09-01',
+            dueDateSource: 'manual',
+          }),
+        ).expect(204);
+        expect((await stored(manualId)).type).toBe('opening_balance');
+      });
+    });
+
+    describe('due-date preservation and validation rules', () => {
+      it('preserves the original term when editing issueDate even after supplier paymentTermDays changed', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await enter(
+          invoice(supplierId, { issueDate: '2026-10-01', dueDate: null }),
+        );
+        expect((await stored(id)).dueDate).toBe('2026-10-31');
+
+        await changeTerm(supplierId, 60);
+        await put(
+          id,
+          editPayload(supplierId, {
+            issueDate: '2026-10-10',
+            dueDate: null,
+            dueDateSource: 'supplier_term',
+          }),
+        ).expect(204);
+
+        const after = await stored(id);
+        expect(after.dueDate).toBe('2026-11-09');
+        expect(after.dueDateSource).toBe('supplier_term');
+      });
+
+      it('switches between supplier_term and manual, and uses new supplier term on supplier change', async () => {
+        const s1 = await newSupplier(15);
+        const s2 = await newSupplier(45);
+        const id = await enter(
+          invoice(s1, { issueDate: '2026-10-01', dueDate: null }),
+        );
+        expect((await stored(id)).dueDate).toBe('2026-10-16');
+
+        // Switch to manual
+        await put(
+          id,
+          editPayload(s1, {
+            issueDate: '2026-10-01',
+            dueDate: '2026-12-20',
+            dueDateSource: 'manual',
+          }),
+        ).expect(204);
+        expect(await stored(id)).toMatchObject({
+          dueDate: '2026-12-20',
+          dueDateSource: 'manual',
+        });
+
+        // Switch back to supplier_term
+        await put(
+          id,
+          editPayload(s1, {
+            issueDate: '2026-10-01',
+            dueDate: null,
+            dueDateSource: 'supplier_term',
+          }),
+        ).expect(204);
+        expect(await stored(id)).toMatchObject({
+          dueDate: '2026-10-16',
+          dueDateSource: 'supplier_term',
+        });
+
+        // Change supplierId -> uses target supplier's current term
+        await put(
+          id,
+          editPayload(s2, {
+            issueDate: '2026-10-01',
+            dueDate: null,
+            dueDateSource: 'supplier_term',
+          }),
+        ).expect(204);
+        expect(await stored(id)).toMatchObject({
+          dueDate: '2026-11-15',
+          dueDateSource: 'supplier_term',
+        });
+      });
+
+      it('keeps manual dueDate on issueDate edit and rejects issueDate > manual dueDate with due_date_before_issue', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await enter(
+          invoice(supplierId, {
+            issueDate: '2026-10-01',
+            dueDate: '2026-10-15',
+          }),
+        );
+
+        await put(
+          id,
+          editPayload(supplierId, {
+            issueDate: '2026-10-10',
+            dueDate: '2026-10-15',
+            dueDateSource: 'manual',
+          }),
+        ).expect(204);
+        expect((await stored(id)).dueDate).toBe('2026-10-15');
+
+        const res = await put(
+          id,
+          editPayload(supplierId, {
+            issueDate: '2026-10-16',
+            dueDate: '2026-10-15',
+            dueDateSource: 'manual',
+          }),
+        ).expect(400);
+        expect(res.body).toEqual({
+          errors: [{ field: 'dueDate', code: 'due_date_before_issue' }],
+        });
+        expect((await stored(id)).issueDate).toBe('2026-10-10');
+      });
+
+      it('enforces opening_balance and credit_note due-date rules and subtotal validation', async () => {
+        const supplierId = await newSupplier(30);
+        const obId = await enter({
+          supplierId,
+          type: 'opening_balance',
+          letter: null,
+          number: null,
+          issueDate: '2026-10-10',
+          dueDate: '2026-10-01',
+          total: '500.00',
+          notes: null,
+        });
+        await put(
+          obId,
+          editPayload(supplierId, {
+            type: 'opening_balance',
+            letter: null,
+            number: null,
+            issueDate: '2026-10-10',
+            dueDate: '2026-09-15',
+            dueDateSource: 'manual',
+          }),
+        ).expect(204);
+        await put(
+          obId,
+          editPayload(supplierId, {
+            type: 'opening_balance',
+            letter: null,
+            number: null,
+            issueDate: '2026-10-10',
+            dueDate: null,
+            dueDateSource: null,
+          }),
+        ).expect(204);
+        await put(
+          obId,
+          editPayload(supplierId, {
+            type: 'opening_balance',
+            letter: null,
+            number: null,
+            issueDate: '2026-10-10',
+            dueDate: null,
+            dueDateSource: 'supplier_term',
+          }),
+        ).expect(400);
+
+        const cnId = await enter(
+          invoice(supplierId, {
+            type: 'credit_note',
+            number: '0001-00000088',
+          }),
+        );
+        await put(
+          cnId,
+          editPayload(supplierId, {
+            type: 'credit_note',
+            number: '0001-00000088',
+            dueDate: '2026-11-01',
+            dueDateSource: 'manual',
+          }),
+        ).expect(400);
+        await put(
+          cnId,
+          editPayload(supplierId, {
+            type: 'credit_note',
+            number: '0001-00000088',
+            dueDate: null,
+            dueDateSource: 'supplier_term',
+          }),
+        ).expect(400);
+
+        const badSubtotal = await put(
+          cnId,
+          editPayload(supplierId, {
+            type: 'credit_note',
+            number: '0001-00000088',
+            dueDate: null,
+            dueDateSource: null,
+            subtotal: '-1.00',
+          }),
+        ).expect(400);
+        expect(badSubtotal.body).toEqual({
+          errors: [{ field: 'subtotal', code: 'subtotal_invalid' }],
+        });
+
+        await put(
+          cnId,
+          editPayload(supplierId, {
+            type: 'credit_note',
+            number: '0001-00000088',
+            dueDate: null,
+            dueDateSource: null,
+            subtotal: '0.00',
+          }),
+        ).expect(204);
+      });
+    });
+
+    describe('invariant 6, invariant 7, and read-only preservation on edit', () => {
+      it('protects documents with received or given applications on PUT', async () => {
+        const s1 = await newSupplier(30);
+        const s2 = await newSupplier(30);
+        const invId = await enter(
+          invoice(s1, { number: '0001-00000010', total: '1000.00' }),
+        );
+        const cnId = await enter({
+          supplierId: s1,
+          type: 'credit_note',
+          letter: 'A',
+          number: '0001-00000011',
+          issueDate: '2026-10-10',
+          dueDate: null,
+          total: '400.00',
+          notes: null,
+        });
+        await prisma.application.create({
+          data: { creditNoteId: cnId, documentId: invId, amount: '300.00' },
+        });
+
+        for (const body of [
+          editPayload(s2, { number: '0001-00000010', total: '1000.00' }),
+          editPayload(s1, {
+            type: 'delivery_note',
+            number: '0001-00000010',
+            total: '1000.00',
+          }),
+          editPayload(s1, { number: '0001-00000010', total: '299.99' }),
+        ]) {
+          const res = await put(invId, body).expect(409);
+          expect(res.body).toEqual({
+            errors: [{ field: 'document', code: 'document_has_applications' }],
+          });
+        }
+
+        // Credit note that gave 300 cannot drop below 300 or change supplier/type
+        for (const body of [
+          editPayload(s2, {
+            type: 'credit_note',
+            number: '0001-00000011',
+            dueDate: null,
+            dueDateSource: null,
+            total: '400.00',
+          }),
+          editPayload(s1, {
+            type: 'invoice',
+            number: '0001-00000011',
+            total: '400.00',
+          }),
+          editPayload(s1, {
+            type: 'credit_note',
+            number: '0001-00000011',
+            dueDate: null,
+            dueDateSource: null,
+            total: '299.99',
+          }),
+        ]) {
+          const res = await put(cnId, body).expect(409);
+          expect(res.body).toEqual({
+            errors: [{ field: 'document', code: 'document_has_applications' }],
+          });
+        }
+
+        // Lowering to exact applied amount and editing number/issueDate/notes succeeds
+        await put(
+          invId,
+          editPayload(s1, {
+            number: '0001-00000099',
+            issueDate: '2026-10-12',
+            total: '300.00',
+            notes: 'ok',
+          }),
+        ).expect(204);
+        await put(
+          cnId,
+          editPayload(s1, {
+            type: 'credit_note',
+            number: '0001-00000098',
+            dueDate: null,
+            dueDateSource: null,
+            total: '300.00',
+            notes: 'cn ok',
+          }),
+        ).expect(204);
+      });
+
+      it('rejects duplicate numbers on PUT (including null letter) while allowing keeping own number', async () => {
+        const supplierId = await newSupplier(30);
+        const existing = await enter(
+          invoice(supplierId, { letter: null, number: '0001-00005555' }),
+        );
+        const other = await enter(
+          invoice(supplierId, { letter: null, number: '0001-00006666' }),
+        );
+
+        // Colliding with existing counted doc
+        const dup = await put(
+          other,
+          editPayload(supplierId, { letter: null, number: '0001 00005555' }),
+        ).expect(409);
+        expect(dup.body).toEqual({
+          errors: [{ field: 'number', code: 'duplicate_number' }],
+        });
+
+        // Keeping own number succeeds (tests id <> documentId)
+        await put(
+          existing,
+          editPayload(supplierId, {
+            letter: null,
+            number: '0001-00005555',
+            notes: 'mismo número',
+          }),
+        ).expect(204);
+      });
+
+      it('preserves cae, lines, taxes, and raw_output on PUT and writes an audit entry', async () => {
+        const supplierId = await newSupplier(30);
+        const docId = await createDoc({
+          reviewStatus: 'unreviewed',
+          type: 'invoice',
+          supplierId,
+          letter: 'A',
+          number: '0001-00007777',
+          numberNormalized: '000100007777',
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          subtotal: '100.00',
+          total: '121.00',
+          cae: '76543210987654',
+          issues: [],
+          lines: { create: [{ position: 1, description: 'Harina', lineTotal: '100.00' }] },
+          taxes: { create: [{ kind: 'iva', label: 'IVA 21%', amount: '21.00' }] },
+          extractionJobs: {
+            create: {
+              status: 'succeeded',
+              attempts: 1,
+              runAfter: new Date(NOW),
+              model: 'claude-haiku-5-5',
+              promptVersion: '1',
+              rawOutput: { total: '121.00', printedTermDays: 30 },
+            },
+          },
+        });
+
+        await put(
+          docId,
+          editPayload(supplierId, {
+            number: '0001-00007778',
+            subtotal: '200.00',
+            total: '221.00',
+            notes: 'editado',
+          }),
+        ).expect(204);
+
+        const after = await stored(docId);
+        expect(after.cae).toBe('76543210987654');
+        expect(await prisma.documentLine.findMany({ where: { documentId: docId } })).toHaveLength(1);
+        expect(await prisma.documentTax.findMany({ where: { documentId: docId } })).toHaveLength(1);
+        const job = await prisma.extractionJob.findFirstOrThrow({
+          where: { documentId: docId },
+        });
+        expect(job.rawOutput).toEqual({ total: '121.00', printedTermDays: 30 });
+
+        const logs = await prisma.auditLog.findMany({
+          where: { entityId: docId, action: 'update' },
+        });
+        expect(logs).toHaveLength(1);
+        expect(logs[0].userId).toBe(ana.id);
+      });
+    });
+
+    describe('POST /api/documents/:id/retry', () => {
+      it('moves extraction_failed upload to processing, adds a queued job keeping the failed one, and can be claimed by the worker', async () => {
+        const up = await withSession(http().post('/api/uploads'))
+          .set('X-Requested-With', 'XMLHttpRequest')
+          .attach('photos', jpeg(), 'pagina-1.jpg')
+          .expect(201);
+        const id = (up.body as { id: string }).id;
+
+        await prisma.extractionJob.updateMany({
+          where: { documentId: id },
+          data: { status: 'failed', attempts: 4, lastError: 'api error' },
+        });
+        await prisma.document.update({
+          where: { id },
+          data: {
+            reviewStatus: 'error',
+            issues: [{ code: 'extraction_failed' }],
+          },
+        });
+
+        vi.setSystemTime(new Date(new Date(NOW).getTime() + 1000));
+        await retry(id).expect(204);
+
+        const after = await stored(id);
+        expect(after.reviewStatus).toBe('processing');
+        expect(after.issues).toEqual([]);
+
+        const jobs = await prisma.extractionJob.findMany({
+          where: { documentId: id },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        });
+        expect(jobs).toHaveLength(2);
+        expect(jobs[0].status).toBe('failed');
+        expect(jobs[1].status).toBe('queued');
+        expect(jobs[1].attempts).toBe(0);
+
+        const auditLogs = await prisma.auditLog.findMany({
+          where: { entityId: id, action: 'update' },
+        });
+        expect(auditLogs).toHaveLength(1);
+        expect(auditLogs[0].userId).toBe(ana.id);
+
+        const fake = new FakeLlm();
+        const { worker, close } = await createTestWorker(fake);
+        try {
+          fake.reply(invoiceOutput({ supplierCuit: null, supplierName: null }));
+          expect(await worker.runOnce({ documentIds: [id] })).toBe(true);
+          const jobsAfter = await prisma.extractionJob.findMany({
+            where: { documentId: id },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          });
+          expect(jobsAfter[0].status).toBe('failed');
+          expect(jobsAfter[1].status).toBe('succeeded');
+        } finally {
+          await close();
+        }
+      });
+
+      it('rejects retry with 409 not_editable when not error', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({
+          source: 'upload',
+          reviewStatus: 'unreviewed',
+          type: 'credit_note',
+          supplierId,
+          issueDate: new Date('2026-10-09'),
+          total: '100.00',
+          issues: [],
+        });
+        const res = await retry(id).expect(409);
+        expect(res.body).toEqual({
+          errors: [{ field: 'document', code: 'not_editable' }],
+        });
+      });
+
+      it.each([
+        [
+          'missing extraction_failed issue',
+          {
+            source: 'upload',
+            reviewStatus: 'error',
+            issues: [{ code: 'unsupported_document' }],
+          },
+        ],
+        [
+          'manual source',
+          {
+            source: 'manual',
+            reviewStatus: 'error',
+            issues: [{ code: 'extraction_failed' }],
+          },
+        ],
+        [
+          'has type',
+          {
+            source: 'upload',
+            reviewStatus: 'error',
+            type: 'invoice',
+            issues: [{ code: 'extraction_failed' }],
+          },
+        ],
+        [
+          'has total',
+          {
+            source: 'upload',
+            reviewStatus: 'error',
+            total: '100.00',
+            issues: [{ code: 'extraction_failed' }],
+          },
+        ],
+        [
+          'has lines',
+          {
+            source: 'upload',
+            reviewStatus: 'error',
+            issues: [{ code: 'extraction_failed' }],
+            lines: { create: [{ position: 1, description: 'item' }] },
+          },
+        ],
+        [
+          'has taxes',
+          {
+            source: 'upload',
+            reviewStatus: 'error',
+            issues: [{ code: 'extraction_failed' }],
+            taxes: {
+              create: [{ kind: 'iva', label: 'IVA', amount: '10.00' }],
+            },
+          },
+        ],
+      ])('rejects retry with 409 not_editable when %s', async (_, data) => {
+        const id = await createDoc(data);
+        const res = await retry(id).expect(409);
+        expect(res.body).toEqual({
+          errors: [{ field: 'document', code: 'not_editable' }],
+        });
       });
     });
   });

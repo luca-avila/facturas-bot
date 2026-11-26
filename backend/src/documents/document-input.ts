@@ -3,7 +3,10 @@ import { isIsoDate } from '../common/dates.js';
 import { type FieldError, invalidRequest } from '../common/field-errors.js';
 import { Money } from '../common/money.js';
 import { isUuid } from '../common/uuid.js';
-import { DocumentType } from '../generated/prisma/client.js';
+import {
+  DocumentType,
+  type DueDateSource,
+} from '../generated/prisma/client.js';
 import { normalizeNumber } from './document-number.js';
 
 /** A manually entered document, checked and trimmed. */
@@ -14,6 +17,20 @@ export interface ManualDocumentFields {
   number: string | null;
   issueDate: string;
   dueDate: string | null;
+  total: Money;
+  notes: string | null;
+}
+
+/** An edited document header (`PUT /api/documents/:id`), checked and trimmed. */
+export interface UpdateDocumentFields {
+  supplierId: string;
+  type: DocumentType;
+  letter: string | null;
+  number: string | null;
+  issueDate: string;
+  dueDate: string | null;
+  dueDateSource: DueDateSource | null;
+  subtotal: Money | null;
   total: Money;
   notes: string | null;
 }
@@ -29,10 +46,27 @@ const KEYS = [
   'notes',
 ] as const;
 
+const UPDATE_KEYS = [
+  'supplierId',
+  'type',
+  'letter',
+  'number',
+  'issueDate',
+  'dueDate',
+  'dueDateSource',
+  'subtotal',
+  'total',
+  'notes',
+] as const;
+
 const LETTERS: readonly string[] = ['A', 'B', 'C', 'M', 'X'];
 
 function isDocumentType(value: unknown): value is DocumentType {
   return Object.values<unknown>(DocumentType).includes(value);
+}
+
+function isDueDateSource(value: unknown): value is DueDateSource {
+  return value === 'supplier_term' || value === 'manual';
 }
 
 /**
@@ -49,6 +83,15 @@ function readTotal(total: string): Money | null {
   try {
     const money = Money.fromString(total);
     return money.isPositive() ? money : null;
+  } catch {
+    return null;
+  }
+}
+
+function readSubtotal(subtotal: string): Money | null {
+  try {
+    const money = Money.fromString(subtotal);
+    return money.isPositive() || money.isZero() ? money : null;
   } catch {
     return null;
   }
@@ -115,6 +158,123 @@ export function parseDocumentInput(body: unknown): ManualDocumentFields {
     issueDate,
     dueDate,
     total: money,
+    notes: optionalText(notes),
+  };
+}
+
+/**
+ * Reads an `UpdateDocumentInput` body (`PUT /api/documents/:id`). Structural
+ * impossibilities for the chosen `type` are malformed; user mistakes come back
+ * together as field errors.
+ */
+export function parseUpdateDocumentInput(body: unknown): UpdateDocumentFields {
+  const raw = bodyWithKeys(body, UPDATE_KEYS);
+  const {
+    supplierId: rawSupplierId,
+    type,
+    letter,
+    issueDate,
+    dueDate,
+    dueDateSource,
+    subtotal: rawSubtotal,
+    total,
+    notes,
+  } = raw;
+  if (
+    !isStringOrNull(rawSupplierId) ||
+    !isDocumentType(type) ||
+    !(
+      letter === null ||
+      (typeof letter === 'string' && LETTERS.includes(letter))
+    ) ||
+    !isStringOrNull(raw.number) ||
+    typeof issueDate !== 'string' ||
+    !isStringOrNull(dueDate) ||
+    !(dueDateSource === null || isDueDateSource(dueDateSource)) ||
+    !isStringOrNull(rawSubtotal) ||
+    typeof total !== 'string' ||
+    !isStringOrNull(notes)
+  ) {
+    throw invalidRequest();
+  }
+
+  const trimmedSupplierId =
+    rawSupplierId === null ? '' : rawSupplierId.trim();
+  if (trimmedSupplierId !== '' && !isUuid(trimmedSupplierId)) {
+    throw invalidRequest();
+  }
+
+  const number = optionalText(raw.number);
+  const trimmedSubtotal = optionalText(rawSubtotal);
+
+  if (type === 'opening_balance') {
+    if (letter !== null || number !== null || trimmedSubtotal !== null) {
+      throw invalidRequest();
+    }
+    if (dueDateSource === 'supplier_term') throw invalidRequest();
+    if (dueDate === null && dueDateSource !== null) throw invalidRequest();
+    if (dueDate !== null && dueDateSource !== 'manual') throw invalidRequest();
+  } else if (type === 'credit_note') {
+    if (dueDate !== null || dueDateSource !== null) throw invalidRequest();
+  } else {
+    if (dueDateSource === 'supplier_term' && dueDate !== null) {
+      throw invalidRequest();
+    }
+    if (dueDateSource === null && dueDate !== null) throw invalidRequest();
+  }
+
+  const errors: FieldError[] = [];
+  if (trimmedSupplierId === '') {
+    errors.push({ field: 'supplierId', code: 'supplier_required' });
+  }
+  if (number !== null && normalizeNumber(number) === null) {
+    errors.push({ field: 'number', code: 'number_invalid' });
+  }
+  if (!isIsoDate(issueDate)) {
+    errors.push({ field: 'issueDate', code: 'issue_date_invalid' });
+  }
+  if (type === 'opening_balance') {
+    if (dueDate !== null && !isIsoDate(dueDate)) {
+      errors.push({ field: 'dueDate', code: 'due_date_invalid' });
+    }
+  } else if (dueBeforeIssueMatters(type)) {
+    if (dueDateSource === 'manual') {
+      if (dueDate === null || dueDate.trim() === '') {
+        errors.push({ field: 'dueDate', code: 'due_date_required' });
+      } else if (!isIsoDate(dueDate)) {
+        errors.push({ field: 'dueDate', code: 'due_date_invalid' });
+      } else if (isIsoDate(issueDate) && dueDate < issueDate) {
+        errors.push({ field: 'dueDate', code: 'due_date_before_issue' });
+      }
+    } else if (dueDateSource === null) {
+      errors.push({ field: 'dueDate', code: 'due_date_required' });
+    }
+  }
+
+  let parsedSubtotal: Money | null = null;
+  if (trimmedSubtotal !== null) {
+    parsedSubtotal = readSubtotal(trimmedSubtotal);
+    if (parsedSubtotal === null) {
+      errors.push({ field: 'subtotal', code: 'subtotal_invalid' });
+    }
+  }
+
+  const parsedTotal = readTotal(total);
+  if (parsedTotal === null) {
+    errors.push({ field: 'total', code: 'total_invalid' });
+  }
+
+  if (errors.length > 0 || parsedTotal === null) throw invalidRequest(errors);
+  return {
+    supplierId: trimmedSupplierId,
+    type,
+    letter,
+    number,
+    issueDate,
+    dueDate,
+    dueDateSource,
+    subtotal: parsedSubtotal,
+    total: parsedTotal,
     notes: optionalText(notes),
   };
 }
