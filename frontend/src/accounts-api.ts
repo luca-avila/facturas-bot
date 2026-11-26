@@ -20,6 +20,28 @@ export type IssueCode =
   | 'missing_issue_date'
   | 'supplier_term_missing'
   | 'duplicate_number'
+  | 'duplicate_suspected'
+  | 'totals_mismatch'
+  | 'lines_mismatch'
+  | 'wrong_recipient'
+
+export type AcceptableIssueCode =
+  | 'duplicate_suspected'
+  | 'totals_mismatch'
+  | 'lines_mismatch'
+  | 'wrong_recipient'
+
+export const ACCEPTABLE_ISSUE_CODES: readonly AcceptableIssueCode[] = [
+  'duplicate_suspected',
+  'totals_mismatch',
+  'lines_mismatch',
+  'wrong_recipient',
+]
+
+export function isAcceptableIssueCode(code: string): code is AcceptableIssueCode {
+  return (ACCEPTABLE_ISSUE_CODES as readonly string[]).includes(code)
+}
+
 export type TaxKind = 'iva' | 'iva_perception' | 'iibb_perception' | 'other'
 
 export type FieldErrorCode =
@@ -37,6 +59,11 @@ export type FieldErrorCode =
   | 'subtotal_invalid'
   | 'total_invalid'
   | 'duplicate_number'
+  | 'duplicate_suspected'
+  | 'totals_mismatch'
+  | 'lines_mismatch'
+  | 'wrong_recipient'
+  | 'issue_not_acceptable'
   | 'not_editable'
   | 'amount_invalid'
   | 'paid_on_invalid'
@@ -55,6 +82,7 @@ export type FieldErrorCode =
 export interface FieldError {
   field: string
   code: FieldErrorCode
+  documentId?: string
 }
 
 /** Amounts are strings with exactly two decimals, such as "0.00" or "-15000.00". */
@@ -105,6 +133,7 @@ export interface ErrorDocumentRow {
   createdOn: string
   issues: IssueCode[]
   suggestedTermDays: number | null
+  suspectedDuplicateId: string | null
 }
 
 export interface ErrorDocumentList {
@@ -273,6 +302,7 @@ export interface DocumentInput {
   /** "86900.50": dot decimal, no thousands separator. */
   total: string
   notes: string | null
+  allowSuspectedDuplicate?: boolean
 }
 
 export interface UpdateDocumentInput {
@@ -286,6 +316,7 @@ export interface UpdateDocumentInput {
   subtotal: string | null
   total: string
   notes: string | null
+  acceptIssues?: AcceptableIssueCode[]
 }
 
 export interface TermPreviewDocument {
@@ -330,6 +361,28 @@ export interface UploadList {
   uploads: UploadRow[]
 }
 
+export interface AcceptedIssueDetail {
+  code: AcceptableIssueCode
+  acceptedByName: string
+  acceptedOn: string
+  acceptedTime: string
+}
+
+export interface SuspectedDuplicateRef {
+  id: string
+  type: Exclude<DocumentType, 'opening_balance'>
+  letter: string | null
+  number: string | null
+  issueDate: string
+  total: string
+}
+
+export interface ConsistencySummary {
+  taxSum: string | null
+  subtotalPlusTaxes: string | null
+  lineTotalSum: string | null
+}
+
 export interface DocumentDetail {
   id: string
   source: DocumentSource
@@ -357,8 +410,11 @@ export interface DocumentDetail {
   suggestedTermDays: number | null
   cae: string | null
   notes: string | null
-  /** In stored order. */
+  /** Open codes only, in stored order. */
   issues: IssueCode[]
+  acceptedIssues: AcceptedIssueDetail[]
+  suspectedDuplicate: SuspectedDuplicateRef | null
+  consistencySummary: ConsistencySummary
   /** By position. */
   lines: DocumentLine[]
   taxes: DocumentTax[]
@@ -507,6 +563,14 @@ export function reviewDocument(id: string): Promise<ApiResult<void>> {
 
 export function retryDocument(id: string): Promise<ApiResult<void>> {
   return call(`/api/documents/${encodeURIComponent(id)}/retry`, jsonBody('POST', {}), nothing)
+}
+
+export function acceptDocumentIssue(id: string, code: AcceptableIssueCode): Promise<ApiResult<void>> {
+  return call(
+    `/api/documents/${encodeURIComponent(id)}/issues/${encodeURIComponent(code)}/accept`,
+    jsonBody('POST', {}),
+    nothing,
+  )
 }
 
 export function previewSupplierTerm(id: string, paymentTermDays: number): Promise<ApiResult<TermPreview>> {

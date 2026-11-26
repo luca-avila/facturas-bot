@@ -9,7 +9,7 @@ import {
   type SupplierList,
 } from '../accounts-api'
 import { parseAmountInput } from '../format'
-import { DOCUMENT_TYPE_LABELS } from '../labels'
+import { DOCUMENT_TYPE_LABELS, ISSUE_MESSAGES } from '../labels'
 import Field from './Field'
 import { failedSave, localError, type FieldMessages } from './form-errors'
 
@@ -23,6 +23,11 @@ interface Details {
   dueDate: string
   total: string
   notes: string
+}
+
+interface SuspectedDuplicatePrompt {
+  documentId: string
+  another: boolean
 }
 
 const EMPTY: Details = { letter: '', number: '', issueDate: '', dueDate: '', total: '', notes: '' }
@@ -41,6 +46,7 @@ function DocumentForm() {
   const [fieldMessages, setFieldMessages] = useState<FieldMessages>({})
   const [formMessage, setFormMessage] = useState<string | null>(null)
   const [savedNotice, setSavedNotice] = useState(false)
+  const [suspectedDuplicate, setSuspectedDuplicate] = useState<SuspectedDuplicatePrompt | null>(null)
 
   useEffect(() => {
     let current = true
@@ -54,6 +60,7 @@ function DocumentForm() {
 
   const set = (key: keyof Details, value: string) => {
     setSavedNotice(false)
+    setSuspectedDuplicate(null)
     setDetails((d) => ({ ...d, [key]: value }))
   }
   const supplier = suppliers?.ok ? suppliers.value.suppliers.find((s) => s.id === supplierId) : undefined
@@ -61,9 +68,7 @@ function DocumentForm() {
   const hasDueDate = type !== 'credit_note'
   const needsTypedDueDate = (type === 'invoice' || type === 'delivery_note') && supplier?.paymentTermDays === null
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const another = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'another'
+  async function submitDocument(another: boolean, allowSuspectedDuplicate: boolean) {
     setFormMessage(null)
     setSavedNotice(false)
     const total = parseAmountInput(details.total)
@@ -80,12 +85,14 @@ function DocumentForm() {
       dueDate: !hasDueDate || details.dueDate === '' ? null : details.dueDate,
       total,
       notes: details.notes,
+      ...(allowSuspectedDuplicate ? { allowSuspectedDuplicate: true } : {}),
     }
     setSaving(true)
     const result = await createDocument(input)
     setSaving(false)
     if (result.ok) {
       setFieldMessages({})
+      setSuspectedDuplicate(null)
       if (another) {
         setDetails(EMPTY)
         setSavedNotice(true)
@@ -94,9 +101,27 @@ function DocumentForm() {
       }
       return
     }
+    if (result.error === 'rejected') {
+      const dup = result.fieldErrors.find(
+        (err) => err.code === 'duplicate_suspected' && typeof err.documentId === 'string',
+      )
+      if (dup?.documentId !== undefined) {
+        setFieldMessages({})
+        setFormMessage(null)
+        setSuspectedDuplicate({ documentId: dup.documentId, another })
+        return
+      }
+    }
+    setSuspectedDuplicate(null)
     const failure = failedSave(result)
     setFieldMessages(failure.fields)
     setFormMessage(failure.form)
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const another = (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'another'
+    void submitDocument(another, false)
   }
 
   return (
@@ -112,9 +137,16 @@ function DocumentForm() {
         </p>
       )}
 
-      <form onSubmit={(event) => void handleSubmit(event)} noValidate>
+      <form onSubmit={handleSubmit} noValidate>
         <Field id={`${ids}-supplier`} label="Proveedor">
-          <select id={`${ids}-supplier`} value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          <select
+            id={`${ids}-supplier`}
+            value={supplierId}
+            onChange={(e) => {
+              setSuspectedDuplicate(null)
+              setSupplierId(e.target.value)
+            }}
+          >
             {supplier === undefined && <option value={supplierId}>{suppliers === null ? 'Cargando…' : ''}</option>}
             {suppliers?.ok &&
               suppliers.value.suppliers.map((s) => (
@@ -129,7 +161,10 @@ function DocumentForm() {
           <select
             id={`${ids}-type`}
             value={type}
-            onChange={(e) => setType(TYPES.find((t) => t === e.target.value) ?? 'invoice')}
+            onChange={(e) => {
+              setSuspectedDuplicate(null)
+              setType(TYPES.find((t) => t === e.target.value) ?? 'invoice')
+            }}
           >
             {TYPES.map((t) => (
               <option key={t} value={t}>
@@ -218,6 +253,35 @@ function DocumentForm() {
           {formMessage ?? ''}
         </p>
         {savedNotice && <p className="notice">Guardado.</p>}
+
+        {suspectedDuplicate !== null && (
+          <div className="inline-panel" role="alert">
+            <p>
+              <strong>{ISSUE_MESSAGES.duplicate_suspected}</strong>
+            </p>
+            <div className="resolver-actions">
+              <button
+                type="button"
+                className="compact-btn"
+                disabled={saving}
+                onClick={() => void submitDocument(suspectedDuplicate.another, true)}
+              >
+                {saving ? 'Guardando…' : 'Guardar igual'}
+              </button>
+              <Link className="button secondary compact" to={`/documentos/${suspectedDuplicate.documentId}`}>
+                Ver el existente
+              </Link>
+              <button
+                type="button"
+                className="secondary compact-btn"
+                disabled={saving}
+                onClick={() => setSuspectedDuplicate(null)}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="buttons">
           <button type="submit" value="save" disabled={saving}>

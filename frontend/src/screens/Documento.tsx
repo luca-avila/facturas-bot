@@ -1,13 +1,16 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
 import {
+  acceptDocumentIssue,
   deleteDocument,
   getDocument,
   imageUrl,
+  isAcceptableIssueCode,
   listSuppliers,
   retryDocument,
   reviewDocument,
   updateDocument,
+  type AcceptableIssueCode,
   type ApiResult,
   type DocumentDetail,
   type DocumentLine,
@@ -16,7 +19,7 @@ import {
   type TermPreview,
 } from '../accounts-api'
 import { documentTitle, formatDate, formatDecimal, formatMoney } from '../format'
-import { DOCUMENT_TYPE_LABELS, ISSUE_MESSAGES, REVIEW_STATUS_LABELS } from '../labels'
+import { ACCEPT_ISSUE_LABELS, DOCUMENT_TYPE_LABELS, ISSUE_MESSAGES, REVIEW_STATUS_LABELS } from '../labels'
 import {
   allowedTypesForSource,
   buildUpdatePayload,
@@ -44,6 +47,11 @@ interface Loaded {
 interface EditState {
   docId: string
   values: DocumentEditValues
+}
+
+interface PendingAcceptState {
+  codes: AcceptableIssueCode[]
+  suspectedDuplicateId: string | null
 }
 
 type Tab = 'datos' | 'foto'
@@ -95,6 +103,8 @@ function Documento() {
   const [fieldMessages, setFieldMessages] = useState<FieldMessages>({})
   const [formMessage, setFormMessage] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [pendingAccept, setPendingAccept] = useState<PendingAcceptState | null>(null)
+  const pendingNoticeRef = useRef<'save' | 'accept' | null>(null)
   const key = `${id}\n${attempt}`
 
   // Reloads with the document, so a term saved here reaches `supplierTermDays`.
@@ -120,6 +130,24 @@ function Documento() {
       })
       if (result.ok) {
         setEditState({ docId: result.value.id, values: initialEditValues(result.value) })
+        setPendingAccept(null)
+        const pendingKind = pendingNoticeRef.current
+        if (pendingKind !== null) {
+          pendingNoticeRef.current = null
+          if (pendingKind === 'save') {
+            setNotice(
+              result.value.reviewStatus === 'reviewed'
+                ? 'Guardado en Revisado.'
+                : 'Cambios guardados. Quedan avisos pendientes para aceptar o corregir.',
+            )
+          } else {
+            setNotice(
+              result.value.reviewStatus === 'reviewed'
+                ? 'Aceptado. El documento pasó a Revisado.'
+                : 'Aviso aceptado. Quedan otros avisos pendientes.',
+            )
+          }
+        }
       }
     })
     return () => {
@@ -176,13 +204,81 @@ function Documento() {
 
   const doc = result.value
   const values = editState?.docId === doc.id ? editState.values : initialEditValues(doc)
+  const dirty = isEditDirty(doc, values)
+  const locked = isAppliedLocked(doc)
   const title = heading(doc)
   const count = doc.images.length
   const by = doc.source === 'upload' ? 'Subido por' : 'Cargado por'
   const tabbed = count > 0 && !processing
   const showExtractionFailedCard = isPureExtractionFailure(doc) && !manualMode
+  const openAcceptableIssues = doc.issues.filter(isAcceptableIssueCode)
+  const openBlockingIssues = doc.issues.filter((code) => !isAcceptableIssueCode(code))
 
   const refreshDoc = () => setAttempt((n) => n + 1)
+
+  async function handleAcceptIssue(code: AcceptableIssueCode) {
+    setSaving(true)
+    setFormMessage(null)
+    setNotice(null)
+    const res = await acceptDocumentIssue(doc.id, code)
+    setSaving(false)
+    if (res.ok) {
+      pendingNoticeRef.current = 'accept'
+      refreshDoc()
+      return
+    }
+    const failure = failedSave(res)
+    setFieldMessages(failure.fields)
+    setFormMessage(failure.form ?? Object.values(failure.fields)[0] ?? 'No pudimos aceptar el aviso.')
+  }
+
+  async function handleSave(acceptIssues?: AcceptableIssueCode[]) {
+    setFormMessage(null)
+    setNotice(null)
+    const built = buildUpdatePayload(values)
+    if (!built.ok) {
+      setFieldMessages(localError(built.field, built.code))
+      return
+    }
+    setSaving(true)
+    const payload = acceptIssues !== undefined ? { ...built.input, acceptIssues } : built.input
+    const res = await updateDocument(doc.id, payload)
+    setSaving(false)
+    if (res.ok) {
+      setFieldMessages({})
+      setFormMessage(null)
+      setPendingAccept(null)
+      setManualMode(false)
+      pendingNoticeRef.current = 'save'
+      refreshDoc()
+      return
+    }
+    if (
+      res.error === 'rejected' &&
+      doc.reviewStatus !== 'error' &&
+      res.fieldErrors.length > 0 &&
+      res.fieldErrors.every((err) => isAcceptableIssueCode(err.code))
+    ) {
+      const codes = res.fieldErrors.map((err) => err.code as AcceptableIssueCode)
+      const suspectedDuplicateId =
+        res.fieldErrors.find((err) => err.code === 'duplicate_suspected')?.documentId ?? null
+      setFieldMessages({})
+      setFormMessage(null)
+      setPendingAccept({ codes, suspectedDuplicateId })
+      return
+    }
+    setPendingAccept(null)
+    const failure = failedSave(res)
+    setFieldMessages(failure.fields)
+    if (doc.reviewStatus !== 'error') {
+      setFormMessage(
+        failure.form ??
+          'No se guardó. Este documento no puede quedar con errores. Corregí lo marcado o deshacé los cambios.',
+      )
+    } else {
+      setFormMessage(failure.form)
+    }
+  }
 
   async function handleRetry() {
     setSaving(true)
@@ -261,10 +357,89 @@ function Documento() {
           <p>
             <strong>No cuenta en el saldo. No admite pagos.</strong>
           </p>
-          {doc.issues.map((code) => (
+          {openBlockingIssues.map((code) => (
             <p key={code}>{ISSUE_MESSAGES[code]}</p>
           ))}
         </div>
+      )}
+
+      {doc.reviewStatus === 'error' && !showExtractionFailedCard && openAcceptableIssues.length > 0 && (
+        <div className="issue-cards">
+          {openAcceptableIssues.map((code) => (
+            <div key={code} className="card issue-card">
+              <p>
+                <strong>{ISSUE_MESSAGES[code]}</strong>
+              </p>
+              {code === 'duplicate_suspected' && doc.suspectedDuplicate !== null && (
+                <p className="muted">
+                  Existente:{' '}
+                  {documentTitle({
+                    type: doc.suspectedDuplicate.type,
+                    letter: doc.suspectedDuplicate.letter,
+                    number: doc.suspectedDuplicate.number,
+                  })}{' '}
+                  · {formatDate(doc.suspectedDuplicate.issueDate)} · {formatMoney(doc.suspectedDuplicate.total)}
+                </p>
+              )}
+              {code === 'totals_mismatch' &&
+                doc.subtotal !== null &&
+                doc.consistencySummary.taxSum !== null &&
+                doc.consistencySummary.subtotalPlusTaxes !== null &&
+                doc.total !== null && (
+                  <p className="muted">
+                    Subtotal {formatMoney(doc.subtotal)} + impuestos {formatMoney(doc.consistencySummary.taxSum)} ={' '}
+                    {formatMoney(doc.consistencySummary.subtotalPlusTaxes)} (total {formatMoney(doc.total)}).
+                  </p>
+                )}
+              {code === 'lines_mismatch' && doc.consistencySummary.lineTotalSum !== null && (
+                <p className="muted">
+                  Suma de ítems: {formatMoney(doc.consistencySummary.lineTotalSum)}
+                  {doc.subtotal !== null ? ` · Subtotal: ${formatMoney(doc.subtotal)}` : ''}
+                  {doc.total !== null ? ` · Total: ${formatMoney(doc.total)}` : ''}.
+                </p>
+              )}
+              <div className="resolver-actions">
+                <button
+                  type="button"
+                  className="compact-btn"
+                  disabled={saving || dirty}
+                  onClick={() => void handleAcceptIssue(code)}
+                >
+                  {ACCEPT_ISSUE_LABELS[code]}
+                </button>
+                {code === 'duplicate_suspected' && doc.suspectedDuplicate !== null && (
+                  <Link className="button secondary compact" to={`/documentos/${doc.suspectedDuplicate.id}`}>
+                    Ver el existente
+                  </Link>
+                )}
+                {code === 'duplicate_suspected' && !locked && (
+                  <button
+                    type="button"
+                    className="secondary compact-btn"
+                    disabled={saving}
+                    onClick={() => setConfirmDiscard(true)}
+                  >
+                    Descartar
+                  </button>
+                )}
+              </div>
+              {dirty && <p className="hint">Guardá o deshacé los cambios antes de aceptar.</p>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!processing && doc.acceptedIssues.length > 0 && (
+        <ul className="accepted-issues">
+          {doc.acceptedIssues.map((item) => (
+            <li key={item.code} className="accepted-issue">
+              <s>{ISSUE_MESSAGES[item.code]}</s>
+              <span className="muted">
+                Aceptado por {item.acceptedByName} · {formatDate(item.acceptedOn)} {item.acceptedTime}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
 
       {processing && (
@@ -367,45 +542,21 @@ function Documento() {
               confirmDiscard={confirmDiscard}
               fieldMessages={fieldMessages}
               formMessage={formMessage}
+              pendingAccept={pendingAccept}
               onChange={(next) => {
                 setEditState({ docId: doc.id, values: next })
+                setPendingAccept(null)
                 setNotice(null)
               }}
-              onSave={async () => {
-                setFormMessage(null)
-                setNotice(null)
-                const built = buildUpdatePayload(values)
-                if (!built.ok) {
-                  setFieldMessages(localError(built.field, built.code))
-                  return
-                }
-                setSaving(true)
-                const res = await updateDocument(doc.id, built.input)
-                setSaving(false)
-                if (res.ok) {
-                  setFieldMessages({})
-                  setFormMessage(null)
-                  setManualMode(false)
-                  setNotice('Guardado en Revisado.')
-                  refreshDoc()
-                  return
-                }
-                const failure = failedSave(res)
-                setFieldMessages(failure.fields)
-                if (doc.reviewStatus !== 'error') {
-                  setFormMessage(
-                    failure.form ??
-                      'No se guardó. Este documento no puede quedar con errores. Corregí lo marcado o deshacé los cambios.',
-                  )
-                } else {
-                  setFormMessage(failure.form)
-                }
-              }}
+              onSave={() => void handleSave()}
+              onAcceptAndSave={(codes) => void handleSave(codes)}
+              onCancelAccept={() => setPendingAccept(null)}
               onReview={() => void handleReview()}
               onUndo={() => {
                 setEditState({ docId: doc.id, values: initialEditValues(doc) })
                 setFieldMessages({})
                 setFormMessage(null)
+                setPendingAccept(null)
               }}
               onOpenTermSheet={() => setTermSheetOpen(true)}
               onRequestDiscard={() => setConfirmDiscard(true)}
@@ -491,8 +642,11 @@ interface DatosFormProps {
   confirmDiscard: boolean
   fieldMessages: FieldMessages
   formMessage: string | null
+  pendingAccept: PendingAcceptState | null
   onChange: (next: DocumentEditValues) => void
   onSave: () => void
+  onAcceptAndSave: (codes: AcceptableIssueCode[]) => void
+  onCancelAccept: () => void
   onReview: () => void
   onUndo: () => void
   onOpenTermSheet: () => void
@@ -509,8 +663,11 @@ function DatosForm({
   confirmDiscard,
   fieldMessages,
   formMessage,
+  pendingAccept,
   onChange,
   onSave,
+  onAcceptAndSave,
+  onCancelAccept,
   onReview,
   onUndo,
   onOpenTermSheet,
@@ -858,6 +1015,35 @@ function DatosForm({
           <p role="alert" className="error">
             {formMessage}
           </p>
+        )}
+
+        {pendingAccept !== null && (
+          <div className="inline-panel" role="alert">
+            <p>
+              <strong>Este cambio genera avisos que requieren confirmación:</strong>
+            </p>
+            {pendingAccept.codes.map((code) => (
+              <p key={code}>{ISSUE_MESSAGES[code]}</p>
+            ))}
+            <div className="resolver-actions">
+              <button
+                type="button"
+                className="compact-btn"
+                disabled={saving}
+                onClick={() => onAcceptAndSave(pendingAccept.codes)}
+              >
+                {saving ? 'Guardando…' : 'Aceptar y guardar'}
+              </button>
+              {pendingAccept.suspectedDuplicateId !== null && (
+                <Link className="button secondary compact" to={`/documentos/${pendingAccept.suspectedDuplicateId}`}>
+                  Ver el existente
+                </Link>
+              )}
+              <button type="button" className="secondary compact-btn" disabled={saving} onClick={onCancelAccept}>
+                Cancelar
+              </button>
+            </div>
+          </div>
         )}
 
         <div className="buttons">

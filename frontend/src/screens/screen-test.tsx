@@ -101,6 +101,9 @@ export function documentDetail(overrides: Partial<DocumentDetail> = {}): Documen
     cae: null,
     notes: null,
     issues: [],
+    acceptedIssues: [],
+    suspectedDuplicate: null,
+    consistencySummary: { taxSum: null, subtotalPlusTaxes: null, lineTotalSum: null },
     lines: [],
     taxes: [],
     ...overrides,
@@ -119,6 +122,7 @@ export function errorRow(overrides: Partial<ErrorDocumentRow> & Pick<ErrorDocume
     createdByName: 'Ana',
     createdOn: '2026-11-02',
     suggestedTermDays: null,
+    suspectedDuplicateId: null,
     ...overrides,
   }
 }

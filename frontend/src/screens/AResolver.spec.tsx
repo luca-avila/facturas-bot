@@ -80,4 +80,85 @@ describe('A resolver', () => {
     expect(await screen.findByText('Proveedor asignado. El documento pasó a Revisado.')).toBeDefined()
     expect(await screen.findByText('No hay nada para resolver.')).toBeDefined()
   })
+
+  it('shows inline accept action and Ver el existente link for duplicate_suspected, and removes resolved document on accept', async () => {
+    let resolved = false
+    stubApi({
+      'GET /api/error-documents': () => {
+        const documents: ErrorDocumentRow[] = resolved
+          ? []
+          : [
+              errorRow({
+                id: 'doc-dup',
+                type: 'delivery_note',
+                letter: 'X',
+                number: null,
+                supplier: { id: 'sup-1', name: 'Panadería Sol' },
+                issues: ['duplicate_suspected'],
+                suspectedDuplicateId: 'doc-orig',
+              }),
+            ]
+        return ok({
+          summary: { count: documents.length, amount: resolved ? '0.00' : '1000.00', supplierName: null },
+          documents,
+        })
+      },
+      'GET /api/suppliers': () =>
+        ok(supplierList([supplierRow({ id: 'sup-1', name: 'Panadería Sol', paymentTermDays: 30 })])),
+      'POST /api/documents/doc-dup/issues/duplicate_suspected/accept': () => {
+        resolved = true
+        return ok()
+      },
+    })
+
+    renderAt(<AResolver />, '/a-resolver', '/a-resolver')
+    const link = await screen.findByRole('link', { name: 'Ver el existente' })
+    expect(link.getAttribute('href')).toBe('/documentos/doc-orig')
+    expect(screen.getByRole('button', { name: 'Descartar' })).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aceptar igual' }))
+    expect(await screen.findByText('Aceptado. El documento pasó a Revisado.')).toBeDefined()
+    expect(await screen.findByText('No hay nada para resolver.')).toBeDefined()
+  })
+
+  it('shows a pending-issues notice when Elegir proveedor leaves an acceptable issue open', async () => {
+    let assigned = false
+    stubApi({
+      'GET /api/error-documents': () =>
+        ok({
+          summary: { count: 1, amount: '1000.00', supplierName: null },
+          documents: [
+            errorRow({
+              id: 'doc-3',
+              supplier: assigned ? { id: 'sup-1', name: 'Panadería Sol' } : null,
+              issues: assigned ? ['wrong_recipient'] : ['supplier_unresolved', 'wrong_recipient'],
+            }),
+          ],
+        }),
+      'GET /api/suppliers': () =>
+        ok(supplierList([supplierRow({ id: 'sup-1', name: 'Panadería Sol', paymentTermDays: 30 })])),
+      'GET /api/documents/doc-3': () =>
+        ok(
+          documentDetail({
+            id: 'doc-3',
+            reviewStatus: 'error',
+            issues: ['supplier_unresolved', 'wrong_recipient'],
+          }),
+        ),
+      'PUT /api/documents/doc-3': () => {
+        assigned = true
+        return ok()
+      },
+    })
+
+    renderAt(<AResolver />, '/a-resolver', '/a-resolver')
+    fireEvent.click(await screen.findByRole('button', { name: 'Elegir proveedor' }))
+    fireEvent.change(screen.getByLabelText('Proveedor'), { target: { value: 'sup-1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    expect(
+      await screen.findByText('Proveedor asignado. Quedan avisos pendientes en el documento.'),
+    ).toBeDefined()
+    expect(await screen.findByRole('button', { name: 'Aceptar CUIT' })).toBeDefined()
+  })
 })
