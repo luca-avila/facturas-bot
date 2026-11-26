@@ -1,8 +1,10 @@
-import { addDays } from '../common/dates.js';
+import { addDays, diffDays, isIsoDate } from '../common/dates.js';
 import type {
   DocumentType,
   DueDateSource,
 } from '../generated/prisma/client.js';
+
+const MAX_SUGGESTED_TERM_DAYS = 365;
 
 export interface ResolvedDueDate {
   dueDate: string | null;
@@ -42,4 +44,43 @@ export function resolveDueDate(input: {
       }
       return { dueDate: null, source: null };
   }
+}
+
+function isValidTermDays(days: unknown): days is number {
+  return (
+    typeof days === 'number' &&
+    Number.isInteger(days) &&
+    days >= 0 &&
+    days <= MAX_SUGGESTED_TERM_DAYS
+  );
+}
+
+/**
+ * Suggests a supplier term in `0..365` from an extraction job's `raw_output`,
+ * preferring `printedTermDays` and falling back to `printedDueDate - issueDate`.
+ */
+export function suggestTermDays(
+  rawOutput: unknown,
+  documentIssueDate: string | null,
+): number | null {
+  if (rawOutput === null || typeof rawOutput !== 'object' || Array.isArray(rawOutput)) {
+    return null;
+  }
+  const record = rawOutput as Record<string, unknown>;
+  if (isValidTermDays(record.printedTermDays)) {
+    return record.printedTermDays;
+  }
+  const printedDueDate = record.printedDueDate;
+  if (typeof printedDueDate !== 'string' || !isIsoDate(printedDueDate)) {
+    return null;
+  }
+  const issueDate =
+    documentIssueDate !== null && isIsoDate(documentIssueDate)
+      ? documentIssueDate
+      : typeof record.issueDate === 'string' && isIsoDate(record.issueDate)
+        ? record.issueDate
+        : null;
+  if (issueDate === null) return null;
+  const days = diffDays(issueDate, printedDueDate);
+  return isValidTermDays(days) ? days : null;
 }

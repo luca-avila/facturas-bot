@@ -9,7 +9,7 @@ import {
   EXTRACTION_RESULT_CUITS,
   RESTAURANT_TEST_CUIT,
 } from '../../test/test-cuits.js';
-import { DuplicateNumberCheck } from './duplicate-number-check.js';
+import { DuplicateNumberCheck } from '../documents/duplicate-number-check.js';
 import type { ExtractionOutput } from './prompt.js';
 
 const NOW = '2026-11-24T15:00:00.000Z';

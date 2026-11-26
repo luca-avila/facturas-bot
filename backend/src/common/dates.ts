@@ -34,3 +34,9 @@ export function fromDbDate(date: Date): string {
 export function addDays(date: string, days: number): string {
   return fromDbDate(new Date(toDbDate(date).getTime() + days * DAY_MS));
 }
+
+/** Exact calendar day difference in UTC (`to - from`). */
+export function diffDays(from: string, to: string): number {
+  const days = (toDbDate(to).getTime() - toDbDate(from).getTime()) / DAY_MS;
+  return days === 0 ? 0 : Math.round(days);
+}
