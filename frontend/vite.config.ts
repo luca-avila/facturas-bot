@@ -10,7 +10,28 @@ export default defineConfig({
     proxy: { '/api': 'http://localhost:3000' },
   },
   test: {
-    environment: 'node',
-    include: ['src/**/*.spec.{ts,tsx}', 'test/**/*.spec.ts'],
+    // Any test that logs console.error fails (test/setup.ts). Screen tests,
+    // `*.spec.tsx`, render in jsdom and stub `fetch` (src/screens/screen-test.tsx).
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'node',
+          include: ['src/**/*.spec.ts', 'test/**/*.spec.ts'],
+          setupFiles: ['test/setup.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'screens',
+          environment: 'jsdom',
+          include: ['src/**/*.spec.tsx'],
+          setupFiles: ['test/setup.ts', 'test/dom-setup.ts'],
+          unstubGlobals: true,
+        },
+      },
+    ],
   },
 })

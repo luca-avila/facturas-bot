@@ -23,6 +23,7 @@ You implement the approved plan. In this pass the goal is working, tested code. 
   - a guard that several paths call, such as a fence, gets that check at each call site, not only by breaking the guard itself: a test through one path passes with the guard missing from another
   - a nullable column in a comparison or a unique key gets a case with it null on both sides. `=` and `IS NOT DISTINCT FROM`, or an index with and without `NULLS NOT DISTINCT`, only differ there
   - a test with random input (a secret, a UUID, a hash) passes for every value it can take. Work out the odd values instead of trusting a few green runs.
+  - a screen behavior the backend doesn't decide, such as a field that follows another or data that must reload after a save on the same screen, gets a screen test (`*.spec.tsx`) through what the person clicks and sees
 - Don't touch anything out of scope. If you see something broken, note it in the final summary.
 
 ## Before finishing
