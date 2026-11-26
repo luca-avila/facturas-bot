@@ -28,13 +28,16 @@ export type FieldErrorCode =
   | 'cuit_invalid'
   | 'cuit_taken'
   | 'payment_term_invalid'
+  | 'supplier_required'
   | 'number_invalid'
   | 'issue_date_invalid'
   | 'due_date_invalid'
   | 'due_date_required'
   | 'due_date_before_issue'
+  | 'subtotal_invalid'
   | 'total_invalid'
   | 'duplicate_number'
+  | 'not_editable'
   | 'amount_invalid'
   | 'paid_on_invalid'
   | 'value_date_invalid'
@@ -101,6 +104,7 @@ export interface ErrorDocumentRow {
   /** The upload date in Buenos Aires. */
   createdOn: string
   issues: IssueCode[]
+  suggestedTermDays: number | null
 }
 
 export interface ErrorDocumentList {
@@ -271,6 +275,36 @@ export interface DocumentInput {
   notes: string | null
 }
 
+export interface UpdateDocumentInput {
+  supplierId: string | null
+  type: DocumentType
+  letter: string | null
+  number: string | null
+  issueDate: string
+  dueDate: string | null
+  dueDateSource: DueDateSource | null
+  subtotal: string | null
+  total: string
+  notes: string | null
+}
+
+export interface TermPreviewDocument {
+  id: string
+  type: 'invoice' | 'delivery_note'
+  letter: string | null
+  number: string | null
+  issueDate: string | null
+  dueDate: string | null
+  willUnblock: boolean
+  remainingIssues: IssueCode[]
+}
+
+export interface TermPreview {
+  paymentTermDays: number
+  documents: TermPreviewDocument[]
+  unblockedCount: number
+}
+
 export type UploadScope = 'mine' | 'all'
 
 export interface UploadRow {
@@ -307,15 +341,20 @@ export interface DocumentDetail {
   /** YYYY-MM-DD and HH:MM in Buenos Aires. */
   createdOn: string
   createdTime: string
+  reviewedByName: string | null
+  reviewedOn: string | null
+  reviewedTime: string | null
   /** By position. Empty for a manual document. */
   images: { id: string; position: number }[]
-  supplier: { id: string; name: string } | null
+  supplier: { id: string; name: string; paymentTermDays: number | null } | null
   issueDate: string | null
   dueDate: string | null
   dueDateSource: DueDateSource | null
   /** Numbers keep their column's scale, such as "4.000" or "6198.3500". */
   subtotal: string | null
   total: string | null
+  appliedAmount: string
+  suggestedTermDays: number | null
   cae: string | null
   notes: string | null
   /** In stored order. */
@@ -456,6 +495,34 @@ export function createDocument(input: DocumentInput): Promise<ApiResult<{ id: st
 
 export function deleteDocument(id: string): Promise<ApiResult<void>> {
   return call(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }, nothing)
+}
+
+export function updateDocument(id: string, input: UpdateDocumentInput): Promise<ApiResult<void>> {
+  return call(`/api/documents/${encodeURIComponent(id)}`, jsonBody('PUT', input), nothing)
+}
+
+export function reviewDocument(id: string): Promise<ApiResult<void>> {
+  return call(`/api/documents/${encodeURIComponent(id)}/review`, jsonBody('POST', {}), nothing)
+}
+
+export function retryDocument(id: string): Promise<ApiResult<void>> {
+  return call(`/api/documents/${encodeURIComponent(id)}/retry`, jsonBody('POST', {}), nothing)
+}
+
+export function previewSupplierTerm(id: string, paymentTermDays: number): Promise<ApiResult<TermPreview>> {
+  return call(
+    `/api/suppliers/${encodeURIComponent(id)}/term/preview`,
+    jsonBody('POST', { paymentTermDays }),
+    json<TermPreview>,
+  )
+}
+
+export function setSupplierTerm(id: string, paymentTermDays: number): Promise<ApiResult<TermPreview>> {
+  return call(
+    `/api/suppliers/${encodeURIComponent(id)}/term`,
+    jsonBody('POST', { paymentTermDays }),
+    json<TermPreview>,
+  )
 }
 
 export function previewSplit(request: SplitRequest): Promise<ApiResult<Split>> {

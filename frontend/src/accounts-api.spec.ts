@@ -10,11 +10,16 @@ import {
   listUploads,
   markPaid,
   previewSplit,
+  previewSupplierTerm,
+  retryDocument,
+  reviewDocument,
+  setSupplierTerm,
   createSupplier,
   deleteDocument,
   getSupplier,
   listSuppliers,
   onUnauthorized,
+  updateDocument,
   updateSupplier,
   uploadPhotos,
   type ApplyCreditInput,
@@ -23,6 +28,7 @@ import {
   type PaymentInput,
   type SplitRequest,
   type SupplierInput,
+  type UpdateDocumentInput,
 } from './accounts-api'
 
 function respond(status: number, body?: unknown) {
@@ -66,6 +72,19 @@ const documentInput: DocumentInput = {
   number: '0001-00004521',
   issueDate: '2026-10-09',
   dueDate: null,
+  total: '86900.50',
+  notes: null,
+}
+
+const updateDocumentInput: UpdateDocumentInput = {
+  supplierId: id,
+  type: 'invoice',
+  letter: 'A',
+  number: '0001-00004521',
+  issueDate: '2026-10-09',
+  dueDate: null,
+  dueDateSource: 'supplier_term',
+  subtotal: '71818.60',
   total: '86900.50',
   notes: null,
 }
@@ -122,6 +141,21 @@ describe('requests', () => {
     ['getPayment', () => getPayment(id), `/api/payments/${id}`, { method: 'GET' }],
     ['listUploads', () => listUploads('mine'), '/api/uploads?scope=mine', { method: 'GET' }],
     ['getDocument', () => getDocument(id), `/api/documents/${id}`, { method: 'GET' }],
+    ['updateDocument', () => updateDocument(id, updateDocumentInput), `/api/documents/${id}`, withJson('PUT', updateDocumentInput)],
+    ['reviewDocument', () => reviewDocument(id), `/api/documents/${id}/review`, withJson('POST', {})],
+    ['retryDocument', () => retryDocument(id), `/api/documents/${id}/retry`, withJson('POST', {})],
+    [
+      'previewSupplierTerm',
+      () => previewSupplierTerm(id, 30),
+      `/api/suppliers/${id}/term/preview`,
+      withJson('POST', { paymentTermDays: 30 }),
+    ],
+    [
+      'setSupplierTerm',
+      () => setSupplierTerm(id, 30),
+      `/api/suppliers/${id}/term`,
+      withJson('POST', { paymentTermDays: 30 }),
+    ],
   ])('%s calls the right URL and method', async (_, call, url, init) => {
     const fetch = respond(200, {})
     await call()
