@@ -67,10 +67,10 @@ flowchart LR
 | `unreviewed` | Sin revisar | Passed every check, nobody looked at it | Yes |
 | `reviewed` | Revisado | A person confirmed it, or typed it in | Yes |
 
-- Manual documents start as `reviewed`, by the person who typed them in.
-- Saving an edit runs the checks again. If they pass, or the remaining issues are accepted, the document becomes `reviewed`, by the person who saved it. Saving an `error` document requires every blocking issue to be resolved (partial fixes are rejected).
+- Manual documents start as `reviewed`, by the person who typed them in. Manual entry checks `duplicate_suspected` (except for `opening_balance`), warning inline and saving as `reviewed` with the issue recorded as accepted when confirmed.
+- Saving an edit runs the checks again, without auto-preserving previously accepted issues. On an `error` document, every blocking issue must pass (partial blocking fixes are rejected); if acceptable issues trigger without being accepted in the save, the edited header is saved and the document stays `error` with those open issues; once zero issues remain open, it becomes `reviewed` by the person who saved it.
 - `reviewed_by` and `reviewed_at` always hold the last person who confirmed the data, and when.
-- Neither `unreviewed` nor `reviewed` ever goes back to `error`: an edit that would leave a blocking issue is rejected.
+- Neither `unreviewed` nor `reviewed` ever goes back to `error`: an edit that would leave a blocking issue is rejected, and an edit that triggers an unaccepted acceptable issue is rejected with `409` so the user can confirm and accept it before saving as `reviewed`.
 - The UI marks *Sin revisar* quietly. It blocks nothing: these documents can take payments as usual.
 - `error` documents can't take payments, because their supplier or total may still change.
 - The balance excludes `error` documents, so the dashboard always warns how many there are and how much they add up to.
@@ -334,14 +334,14 @@ Every issue sends the document to `error`. Some can be accepted as they are, bec
 | `duplicate_suspected` | See [Duplicates](#duplicates) | Yes |
 | `totals_mismatch` | `subtotal + Σ taxes` differs from `total` | Yes |
 | `lines_mismatch` | The sum of lines matches neither `subtotal` nor `total` | Yes |
-| `wrong_recipient` | Recipient CUIT differs from `RESTAURANT_CUIT` | Yes |
+| `wrong_recipient` | Valid recipient CUIT differs from `RESTAURANT_CUIT` (missing or invalid recipient CUIT defaults to `RESTAURANT_CUIT` and skips the check) | Yes |
 
-- Amount comparisons tolerate $1. The sums on all four invoices are exact, so this only leaves room for other suppliers' rounding, without hiding real misreads.
-- `totals_mismatch` is skipped when the document has no tax breakdown, and `lines_mismatch` when it has no lines.
+- Amount comparisons tolerate $1 (`<= 1.00` passes; `>= 1.01` fails). The sums on all four invoices are exact, so this only leaves room for other suppliers' rounding, without hiding real misreads.
+- `totals_mismatch` is skipped when the document has no tax breakdown, no `subtotal`, or no `total`. `lines_mismatch` is skipped when it has no lines, when any line has no `line_total`, or when both `subtotal` and `total` are missing.
 - A valid new CUIT creates the supplier automatically, using the printed name for both `name` and `legal_name`. The check digit catches any single misread digit, so a valid but wrong CUIT most likely belongs to someone else on the page, usually the restaurant. That's why the restaurant's own CUIT never resolves a supplier. A new supplier has no term, so its first invoice or delivery note always stops in *Error*, where a person sees it.
 - Suppliers created by hand need their CUIT, unless they're informal. Without it, their first document would create a second supplier.
 - `base × rate = tax` is deliberately not checked: real invoices differ from it by up to 19 cents.
-- Issues are stored on the document as `[{ "code": "…" }]`, in the order of the table above. `unsupported_document` is always alone: such a document gets no fields, lines, taxes or supplier.
+- Issues are stored on the document as `[{ "code": "…" }]` (or `{ "code": "…", "acceptedBy": "…", "acceptedAt": "…" }` once accepted), in the order of the table above. `unsupported_document` is always alone: such a document gets no fields, lines, taxes or supplier.
 - The worker writes lines and taxes for *Error* documents too, so *Documento* can show what was read.
 - The *Error* warning in *Resumen* counts every *Error* document, and its amount adds up the totals of those that aren't credit notes: a credit note would lower the debt, not raise it.
 
@@ -375,7 +375,7 @@ Where the wireframes differ from this file on purpose:
 - **Subidas (4g):** *Procesando* documents stay listed after 7 days.
 - **Subir (4a, 4b, 4f):** a button opens the phone's own camera, since a camera view inside the page needs HTTPS. Pages move with ↑ and ↓ instead of dragging. An upload that was already there opens its document with a notice, instead of a screen of its own.
 - **Subidas (4g):** rows have no thumbnail. The server never makes smaller copies (E5), and loading every full photo would spend the phone's data.
-- **A resolver (6a–6c):** no thumbnails (E5 and mobile data), and each row shows the upload date, since an unreadable document has no other. No counter in the navigation yet.
+- **A resolver (6a–6c, 6e):** no thumbnails (E5 and mobile data), and each row shows the upload date, since an unreadable document has no other. No counter in the navigation yet. The side-by-side duplicate comparison screen (`6e`) and *Comparar* button (`6b`) are deferred out of the MVP: `duplicate_suspected` shows its warning with a *Ver el existente* link and direct *Aceptar igual* / *Descartar* actions.
 - **Resumen (2a):** only the *Error* warning above the totals, no line per supplier yet.
 - **Documento (5b, 5c, 5h):** *Datos* and *Foto* tabs at every width, and no *Pagos aplicados* card yet.
 

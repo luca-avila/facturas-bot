@@ -304,13 +304,15 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 **Rules.**
 - Now:
-  - `duplicate_suspected`: same supplier, issue date and total, where at least one of the two documents has no number.
-  - `totals_mismatch`: skipped when the document has no taxes.
-  - `lines_mismatch`: the sum of lines matches neither `subtotal` nor `total`. Skipped when there are no lines.
-  - `wrong_recipient`: see [question 9](#open-questions).
-  - Whether manual entry checks `duplicate_suspected`: see [question 1](#open-questions).
+  - `duplicate_suspected`: same supplier, issue date and total, where at least one of the two documents has no number (`opening_balance` excluded on both sides).
+  - `totals_mismatch`: skipped when the document has no taxes, no subtotal, or no total.
+  - `lines_mismatch`: the sum of lines matches neither `subtotal` nor `total`. Skipped when there are no lines, when any line has no `line_total`, or when both `subtotal` and `total` are missing.
+  - `wrong_recipient`: missing or invalid recipient CUIT defaults to `RESTAURANT_CUIT` and skips the check; only a valid 11-digit recipient CUIT different from `RESTAURANT_CUIT` triggers it ([question 9](#open-questions)).
+  - Manual entry checks `duplicate_suspected` (except `opening_balance`), returning a 409 warning with a link to the existing document and asking whether to save anyway (`allowSuspectedDuplicate: true`), recording it as accepted ([question 1](#open-questions)).
+  - Editing header fields re-evaluates acceptable checks without auto-preserving prior acceptances ([question 10](#open-questions)). On `error`, once blocking checks pass, edits save and stay `error` if unaccepted acceptable issues remain. On `unreviewed`/`reviewed`, unaccepted acceptable issues reject with 409 until confirmed.
+  - No side-by-side duplicate comparison screen (`6e`) in the MVP: `duplicate_suspected` shows its warning with a link to the existing document and direct accept/discard actions.
   - Equal amounts alone never make a duplicate. There's no `base × rate` check and no per-line `quantity × unit_price` check.
-  - Accepting an issue marks it as accepted. Once every remaining issue is accepted, the document becomes `reviewed` by whoever accepted the last one. Blocking codes can't be accepted.
+  - Accepting an issue marks it as accepted. Once every remaining issue is accepted (and no concurrent duplicate appeared), the document becomes `reviewed` by whoever accepted the last one. Blocking codes can't be accepted.
 
 **Acceptance.**
 1. Upload two different photos of the same delivery note with no number. The second goes to *Error* as a possible duplicate. Accepting the issue makes it *Revisado*, and discarding it removes it.
@@ -386,7 +388,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 1. **Checks on manual entry** (slices 2 and 7). Manual documents start as `reviewed`, so they can't start in `error`.
    - Answered: in slice 2, manual entry only applies what invariants 1 and 7 force. `supplier_term_missing` needs no check of its own, because invariant 1 already makes the form ask for a term or a typed due date.
    - Answered: an invoice or delivery note with a typed due date earlier than its issue date is refused with `due_date_before_issue`. That catches a mistyped year, such as 2025 for 2026, which would make the document overdue at once. Opening balances are exempt: the overdue one is often typed with the cutover date as its issue date and a past due date.
-   - Should manual entry check `duplicate_suspected` once slice 7 adds it? The proposal is a warning in the form that asks whether to save anyway, not a new status.
+   - Answered (slice 7): manual entry checks `duplicate_suspected` for types other than `opening_balance`. When a match exists, `POST /api/documents` returns `409` with the matching `documentId`, and the form shows an inline warning with a link to the existing document and asks whether to save anyway (`allowSuspectedDuplicate: true`). Saving anyway still creates the document as `reviewed`, recording `duplicate_suspected` as accepted.
 2. **A failed re-check on *Sin revisar*** (slice 6). If saving leaves a blocking issue, does the document go to `error`, or is the save rejected? The document may already have applications. In `error`, it drops out of the balance while the payments applied to it stay used up.
    - Answered: the save is rejected with field errors, just like on a `reviewed` document. Neither `unreviewed` nor `reviewed` ever goes back to `error`. Saving an `error` document (including via *Elegir proveedor*) also requires every blocking issue to pass before becoming `reviewed`.
 3. **Changing money after the fact** (slice 3). Can a payment be edited or deleted once it's applied? Can an application be removed or changed, given the table has no `deleted_at` or `updated_at`? Does invariant 6 also protect a credit note that has already given credit? Slice 3 ships without these actions until this is answered.
@@ -396,10 +398,10 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 6. **Edge cases of the same-image check** (slice 4, one-way). Answered: only documents that aren't deleted count, so a photo whose document was deleted can be uploaded again, and deleting can be undone. An upload whose photos are all in one document returns that document. Any other match refuses the whole upload, naming the document on each matching page. A shared advisory lock, not a unique index, keeps two uploads at the same time from both passing the check.
 7. **Where *Procesando* documents are listed** (slice 4). Answered: in *Subidas*, a new screen with the last 7 days of uploads, where *Procesando* documents stay however old.
 8. **Editing lines and taxes** (slice 6). Answered: only the header fields can be edited, and mismatches are accepted instead.
-9. **`wrong_recipient` with no recipient CUIT** (slice 7). Is that an issue, or is the check skipped?
+9. **`wrong_recipient` with no recipient CUIT** (slice 7). Answered: a missing, blank, or invalid recipient CUIT defaults to `RESTAURANT_CUIT` and skips the check. `wrong_recipient` only triggers when extraction reads a valid 11-digit recipient CUIT that differs from `RESTAURANT_CUIT`.
 10. **What a re-check leaves behind** (slices 6 and 7).
-    - Answered: documents a new term unblocks become `unreviewed`, including the one the person was looking at.
-    - After an edit, does an accepted issue that still triggers stay accepted?
+    - Answered: documents a new term unblocks become `unreviewed`, including the one the person was looking at. Previously accepted issues are preserved when setting a supplier term.
+    - Answered (slice 7): after a document edit, accepted issues are not auto-preserved — every acceptable check is re-evaluated and must be explicitly accepted again if it still triggers. On `error` documents, once blocking checks pass, edits save and stay `error` with open acceptable issues if not accepted in the save; on `unreviewed`/`reviewed`, unaccepted acceptable issues reject with `409` so the user confirms before saving as `reviewed`.
     - Answered: a corrected issue date recomputes the due date with the term the document was created with, not the supplier's current one.
 11. **Re-extraction** (slice 6). Retry is planned only for `extraction_failed`, which has no data to overwrite. Is re-extracting a document that already has data part of the MVP? It's a one-way door.
     - Answered: out of the MVP. *Reintentar* is strictly for `upload` documents in `error` with `extraction_failed` and no extracted data.
