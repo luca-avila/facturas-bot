@@ -93,7 +93,7 @@ function AResolver() {
     return () => {
       current = false
     }
-  }, [])
+  }, [attempt])
 
   const result = loaded?.key === attempt ? loaded.result : null
   const refresh = () => setAttempt((n) => n + 1)
