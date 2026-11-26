@@ -179,4 +179,27 @@ describe('GET /api/error-documents', () => {
     const { documents } = await list();
     expect(documents.find((doc) => doc.id === id)?.suggestedTermDays).toBe(30);
   });
+
+  it('drops an Error document from the list after DELETE and audits the delete', async () => {
+    const id = await upload('2026-11-10T14:00:00Z', {
+      type: 'invoice',
+      total: '750.00',
+      issues: [{ code: 'unsupported_document' }],
+    });
+    expect((await list()).documents.map((d) => d.id)).toContain(id);
+
+    await request(app.getHttpServer())
+      .delete(`/api/documents/${id}`)
+      .set('Cookie', `session=${session}`)
+      .expect(204);
+
+    expect((await list()).documents.map((d) => d.id)).not.toContain(id);
+    const stored = await prisma.document.findUniqueOrThrow({ where: { id } });
+    expect(stored.deletedAt).not.toBeNull();
+    const auditLogs = await prisma.auditLog.findMany({
+      where: { entity: 'documents', entityId: id, action: 'delete' },
+    });
+    expect(auditLogs).toHaveLength(1);
+    expect(auditLogs[0].userId).toBe(ana.id);
+  });
 });
