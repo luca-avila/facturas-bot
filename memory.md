@@ -8,3 +8,4 @@ Format: `- YYYY-MM-DD | rule or category | what was wrong`
 - 2026-11-20 | logic | The same-image check compared the char(64) sha256 column with text[], which casts the column and keeps document_images_sha256_idx from serving the lookup
 - 2026-11-24 | security | UPLOAD_DIR accepted any absolute path, including one inside the repo that the Vite dev server shares on the local network with --host
 - 2026-11-25 | tests | Discarding an Error document via DELETE /api/documents/:id and checking it drops from GET /api/error-documents was not explicitly tested
+- 2026-11-26 | ui | Clicking Descartar in the duplicate_suspected card on Documento toggled the form's confirmation panel, which was unmounted on the Foto tab and off-screen on Datos; navigating via Ver el existente also kept stale Documento state across id changes

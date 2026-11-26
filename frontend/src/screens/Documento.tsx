@@ -55,6 +55,7 @@ interface PendingAcceptState {
 }
 
 type Tab = 'datos' | 'foto'
+type ConfirmDiscard = 'card' | 'form' | null
 
 function heading(doc: DocumentDetail): string | null {
   if (doc.type !== null) return documentTitle({ type: doc.type, letter: doc.letter, number: doc.number })
@@ -87,6 +88,10 @@ function isPureExtractionFailure(doc: DocumentDetail): boolean {
 /** *Documento* (5a–5g, 4f): one document, its photos, and editable header. */
 function Documento() {
   const { id = '' } = useParams()
+  return <DocumentoView key={id} id={id} />
+}
+
+function DocumentoView({ id }: { id: string }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { alreadyUploaded, fromResolver, manualEntry } = routeState(location.state)
@@ -98,7 +103,7 @@ function Documento() {
   const [editState, setEditState] = useState<EditState | null>(null)
   const [manualMode, setManualMode] = useState(manualEntry)
   const [saving, setSaving] = useState(false)
-  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState<ConfirmDiscard>(null)
   const [termSheetOpen, setTermSheetOpen] = useState(false)
   const [fieldMessages, setFieldMessages] = useState<FieldMessages>({})
   const [formMessage, setFormMessage] = useState<string | null>(null)
@@ -304,7 +309,7 @@ function Documento() {
       navigate(fromResolver ? '/a-resolver' : '/subidas')
       return
     }
-    setConfirmDiscard(false)
+    setConfirmDiscard(null)
     const failure = failedSave(res)
     setFieldMessages(failure.fields)
     setFormMessage(failure.form ?? Object.values(failure.fields)[0] ?? 'No pudimos descartar el documento.')
@@ -412,17 +417,40 @@ function Documento() {
                     Ver el existente
                   </Link>
                 )}
-                {code === 'duplicate_suspected' && !locked && (
+                {code === 'duplicate_suspected' && !locked && confirmDiscard !== 'card' && (
                   <button
                     type="button"
                     className="secondary compact-btn"
                     disabled={saving}
-                    onClick={() => setConfirmDiscard(true)}
+                    onClick={() => setConfirmDiscard('card')}
                   >
                     Descartar
                   </button>
                 )}
               </div>
+              {code === 'duplicate_suspected' && !locked && confirmDiscard === 'card' && (
+                <div className="inline-panel">
+                  <p className="muted">¿Descartar este documento? Deja de aparecer en el sistema.</p>
+                  <div className="resolver-actions">
+                    <button
+                      type="button"
+                      className="compact-btn"
+                      disabled={saving}
+                      onClick={() => void handleDiscard()}
+                    >
+                      {saving ? 'Descartando…' : 'Confirmar descarte'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary compact-btn"
+                      disabled={saving}
+                      onClick={() => setConfirmDiscard(null)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
               {dirty && <p className="hint">Guardá o deshacé los cambios antes de aceptar.</p>}
             </div>
           ))}
@@ -476,12 +504,12 @@ function Documento() {
               >
                 Cargar a mano
               </button>
-              {!confirmDiscard ? (
+              {confirmDiscard !== 'form' ? (
                 <button
                   type="button"
                   className="secondary"
                   disabled={saving}
-                  onClick={() => setConfirmDiscard(true)}
+                  onClick={() => setConfirmDiscard('form')}
                 >
                   Descartar
                 </button>
@@ -496,7 +524,7 @@ function Documento() {
                       type="button"
                       className="secondary"
                       disabled={saving}
-                      onClick={() => setConfirmDiscard(false)}
+                      onClick={() => setConfirmDiscard(null)}
                     >
                       Cancelar
                     </button>
@@ -539,7 +567,7 @@ function Documento() {
               values={values}
               suppliers={suppliers}
               saving={saving}
-              confirmDiscard={confirmDiscard}
+              confirmDiscard={confirmDiscard === 'form'}
               fieldMessages={fieldMessages}
               formMessage={formMessage}
               pendingAccept={pendingAccept}
@@ -559,8 +587,8 @@ function Documento() {
                 setPendingAccept(null)
               }}
               onOpenTermSheet={() => setTermSheetOpen(true)}
-              onRequestDiscard={() => setConfirmDiscard(true)}
-              onCancelDiscard={() => setConfirmDiscard(false)}
+              onRequestDiscard={() => setConfirmDiscard('form')}
+              onCancelDiscard={() => setConfirmDiscard(null)}
               onConfirmDiscard={() => void handleDiscard()}
             />
           )}
