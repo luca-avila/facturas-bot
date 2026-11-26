@@ -134,7 +134,7 @@ describe('ExtractionWorker: claiming, leases and retries', () => {
     const first = output({ number: '0001-00000001' });
     const second = output({
       number: '0002-00000002',
-      lines: [output().lines[0]],
+      lines: [{ ...output().lines[0], lineTotal: '41322.31' }],
     });
 
     const stalled = h.fake.hold(first);

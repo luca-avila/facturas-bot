@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { AuditService, type AuditSnapshot } from '../audit/audit.service.js';
+import { ADVISORY_LOCKS } from '../common/advisory-locks.js';
 import { toDbDate } from '../common/dates.js';
 import { uniqueViolationIndex } from '../common/unique-violation.js';
 import { resolveDueDate } from '../documents/due-date.js';
+import { DuplicateNumberCheck } from '../documents/duplicate-number-check.js';
+import { DuplicateSuspectedCheck } from '../documents/duplicate-suspected-check.js';
 import type { IssueCode } from '../documents/issues.js';
 import { Prisma, type ReviewStatus } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { DuplicateNumberCheck } from '../documents/duplicate-number-check.js';
 import type { CallOutcome } from './extraction-call.js';
 import {
   checkExtraction,
@@ -59,6 +61,7 @@ export class ExtractionWriter {
     private readonly audit: AuditService,
     private readonly config: ExtractionConfig,
     private readonly duplicateCheck: DuplicateNumberCheck,
+    private readonly duplicateSuspectedCheck: DuplicateSuspectedCheck,
   ) {}
 
   /**
@@ -134,6 +137,7 @@ export class ExtractionWriter {
     outcome: Success,
     knownDuplicate: boolean,
   ): Promise<WriteResult> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${ADVISORY_LOCKS.documentDuplicates})`;
     if (!(await this.holdsFence(tx, job))) return { kind: 'lost' };
     const rawOutput = outcome.rawOutput as Prisma.InputJsonValue;
 
@@ -183,6 +187,19 @@ export class ExtractionWriter {
           numberNormalized: doc.numberNormalized,
         })));
 
+    const duplicateSuspected =
+      doc !== null &&
+      supplier.resolved &&
+      doc.issueDate !== null &&
+      doc.total !== null &&
+      (await this.duplicateSuspectedCheck.findMatch(tx, {
+        documentId: job.documentId,
+        supplierId: supplier.id,
+        issueDate: doc.issueDate,
+        total: doc.total,
+        hasNumber: doc.numberNormalized !== null,
+      })) !== null;
+
     const checkSupplier: ExtractionCheckInput['supplier'] = supplier.resolved
       ? { resolved: true, paymentTermDays: supplier.paymentTermDays }
       : { resolved: false };
@@ -190,6 +207,8 @@ export class ExtractionWriter {
       mapped,
       supplier: checkSupplier,
       duplicateNumber,
+      duplicateSuspected,
+      restaurantCuit: this.config.restaurantCuit,
     });
 
     // A run replaces everything an earlier run of this job left (E2).
