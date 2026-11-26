@@ -1,4 +1,8 @@
-import { resolveDueDate, suggestTermDays } from './due-date.js';
+import {
+  resolveDueDate,
+  type StoredDueDate,
+  suggestTermDays,
+} from './due-date.js';
 
 describe('resolveDueDate', () => {
   const issueDate = '2026-10-09';
@@ -95,6 +99,111 @@ describe('resolveDueDate', () => {
         paymentTermDays: 30,
       }),
     ).toThrow();
+  });
+});
+
+describe('resolveDueDate for an edit', () => {
+  // Stored 30 days apart. The supplier's term is now 45.
+  const stored: StoredDueDate = {
+    type: 'invoice',
+    supplierId: 'supplier-a',
+    issueDate: '2026-10-01',
+    dueDate: '2026-10-31',
+    source: 'supplier_term',
+  };
+  const edit = (changes: Partial<StoredDueDate> = {}) => ({
+    supplierId: 'supplier-a',
+    stored: { ...stored, ...changes },
+  });
+  const issueDate = '2026-10-09';
+  const kept = { dueDate: '2026-11-08', source: 'supplier_term' };
+  const current = { dueDate: '2026-11-23', source: 'supplier_term' };
+
+  it("keeps the stored term, not the supplier's current one, when the supplier stays", () => {
+    for (const type of ['invoice', 'delivery_note'] as const) {
+      for (const storedType of ['invoice', 'delivery_note'] as const) {
+        expect(
+          resolveDueDate({
+            type,
+            issueDate,
+            typedDueDate: null,
+            paymentTermDays: 45,
+            edit: edit({ type: storedType }),
+          }),
+        ).toEqual(kept);
+      }
+    }
+  });
+
+  it('keeps the stored term when the supplier no longer has one', () => {
+    expect(
+      resolveDueDate({
+        type: 'invoice',
+        issueDate,
+        typedDueDate: null,
+        paymentTermDays: null,
+        edit: edit(),
+      }),
+    ).toEqual(kept);
+  });
+
+  it('keeps a stored term of 0', () => {
+    expect(
+      resolveDueDate({
+        type: 'invoice',
+        issueDate,
+        typedDueDate: null,
+        paymentTermDays: 45,
+        edit: edit({ dueDate: '2026-10-01' }),
+      }),
+    ).toEqual({ dueDate: issueDate, source: 'supplier_term' });
+  });
+
+  it.each([
+    ['the supplier changes', { supplierId: 'supplier-b' }],
+    ['the stored date was typed', { source: 'manual' }],
+    ['the stored date has no source', { source: null }],
+    ['the stored type is an opening balance', { type: 'opening_balance' }],
+    ['the stored type is a credit note', { type: 'credit_note' }],
+    ['there was no stored type', { type: null }],
+    ['there was no stored issue date', { issueDate: null }],
+    ['there was no stored due date', { dueDate: null }],
+  ] as const)("uses the supplier's current term when %s", (_, changes) => {
+    expect(
+      resolveDueDate({
+        type: 'invoice',
+        issueDate,
+        typedDueDate: null,
+        paymentTermDays: 45,
+        edit: edit(changes),
+      }),
+    ).toEqual(current);
+  });
+
+  it('lets a typed date win over the stored term', () => {
+    expect(
+      resolveDueDate({
+        type: 'invoice',
+        issueDate,
+        typedDueDate: '2026-12-01',
+        paymentTermDays: 45,
+        edit: edit(),
+      }),
+    ).toEqual({ dueDate: '2026-12-01', source: 'manual' });
+  });
+
+  it('never gives an opening balance or a credit note the stored term', () => {
+    for (const type of ['opening_balance', 'credit_note'] as const) {
+      expect(
+        resolveDueDate({
+          type,
+          issueDate,
+          typedDueDate: null,
+          paymentTermDays: 45,
+          edit: edit(),
+        }),
+      ).toEqual({ dueDate: null, source: null });
+    }
   });
 });
 

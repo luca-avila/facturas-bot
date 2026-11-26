@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { BalancesService } from '../balances/balances.service.js';
 import { BUSINESS_TIME_ZONE, now } from '../common/clock.js';
-import { addDays, diffDays, fromDbDate, toDbDate } from '../common/dates.js';
+import { fromDbDate, toDbDate } from '../common/dates.js';
 import { conflict, invalidRequest } from '../common/field-errors.js';
 import { uniqueViolationIndex } from '../common/unique-violation.js';
 import { isUuid } from '../common/uuid.js';
@@ -372,7 +372,24 @@ export class DocumentsService {
           reviewStatus: 'reviewed',
         });
 
-        const due = this.resolveUpdateDueDate(doc, input, supplier.paymentTermDays);
+        const due = resolveDueDate({
+          type: input.type,
+          issueDate: input.issueDate,
+          typedDueDate:
+            input.dueDateSource === 'manual' ? input.dueDate : null,
+          paymentTermDays: supplier.paymentTermDays,
+          edit: {
+            supplierId: input.supplierId,
+            stored: {
+              type: doc.type,
+              supplierId: doc.supplierId,
+              issueDate:
+                doc.issueDate === null ? null : fromDbDate(doc.issueDate),
+              dueDate: doc.dueDate === null ? null : fromDbDate(doc.dueDate),
+              source: doc.dueDateSource,
+            },
+          },
+        });
         if (due === 'due_date_required') {
           throw invalidRequest([
             { field: 'dueDate', code: 'due_date_required' },
@@ -432,44 +449,6 @@ export class DocumentsService {
       }
       throw error;
     }
-  }
-
-  private resolveUpdateDueDate(
-    doc: {
-      type: DocumentType | null;
-      supplierId: string | null;
-      issueDate: Date | null;
-      dueDate: Date | null;
-      dueDateSource: DueDateSource | null;
-    },
-    input: UpdateDocumentFields,
-    supplierPaymentTermDays: number | null,
-  ): { dueDate: string | null; source: DueDateSource | null } | 'due_date_required' {
-    if (
-      (input.type === 'invoice' || input.type === 'delivery_note') &&
-      input.dueDateSource === 'supplier_term' &&
-      (doc.type === 'invoice' || doc.type === 'delivery_note') &&
-      doc.dueDateSource === 'supplier_term' &&
-      doc.supplierId === input.supplierId &&
-      doc.issueDate !== null &&
-      doc.dueDate !== null
-    ) {
-      const originalTermDays = diffDays(
-        fromDbDate(doc.issueDate),
-        fromDbDate(doc.dueDate),
-      );
-      return {
-        dueDate: addDays(input.issueDate, originalTermDays),
-        source: 'supplier_term',
-      };
-    }
-    return resolveDueDate({
-      type: input.type,
-      issueDate: input.issueDate,
-      typedDueDate:
-        input.dueDateSource === 'manual' ? input.dueDate : null,
-      paymentTermDays: supplierPaymentTermDays,
-    });
   }
 
   /** Confirms an `unreviewed` (or idempotently `reviewed`) document as-is. */

@@ -8,11 +8,12 @@ import { clockBans, moneyBanRules, moneyBans } from '../eslint-bans.mjs';
 const off = (/** @type {string[]} */ rules) =>
   Object.fromEntries(rules.map((rule) => [rule, 'off']));
 
-// Each table that agents.md gives one writer is banned everywhere else, with
-// the claim as the message, so a new writer has to change the claim with the
-// code. The rule is no-restricted-syntax, which already carries the clock
-// selectors, and ESLint replaces a rule's options instead of merging them, so
-// each file gets the rule built from the groups that apply to it.
+// Each table that agents.md gives one writer is banned everywhere else, and so
+// is computing a due date outside resolveDueDate, with the claim as the
+// message, so breaking it means changing the claim with the code. The rule is
+// no-restricted-syntax, which already carries the clock selectors, and ESLint
+// replaces a rule's options instead of merging them, so each file gets the
+// rule built from the groups that apply to it.
 
 const INSERT_SQL = String.raw`insert\s+into`;
 const CHANGE_SQL = String.raw`update|delete\s+from|truncate(\s+table)?`;
@@ -95,18 +96,35 @@ const restrictedSyntax = (/** @type {unknown[][]} */ ...groups) => ({
   'no-restricted-syntax': ['error', ...groups.flat()],
 });
 
-/** Each table's writers, the directories that may write it. */
-const writeBans = [
+// Only resolveDueDate computes a due date from a term (D4).
+const dueDateSelectors = [
+  {
+    selector: "Property[key.name='dueDate'] > CallExpression[callee.name='addDays']",
+    message: 'Only resolveDueDate (src/documents/due-date.ts) computes a due date (D4).',
+  },
+];
+
+/**
+ * Where each ban is lifted: a directory, ending in `/`, or a file. A file gets
+ * every ban except those lifted on a path it's in.
+ */
+const ownedBans = [
   { owners: ['src/applications/'], selectors: applicationWriteSelectors },
   { owners: ['src/uploads/'], selectors: documentImageWriteSelectors },
   { owners: ['src/uploads/', 'src/documents/'], selectors: extractionJobCreateSelectors },
   { owners: ['src/extraction/'], selectors: extractionJobChangeSelectors },
   { owners: ['src/extraction/'], selectors: lineAndTaxWriteSelectors },
+  { owners: ['src/documents/due-date.ts'], selectors: dueDateSelectors },
 ];
-const allWriteSelectors = writeBans.map((ban) => ban.selectors);
-const ownerDirs = [...new Set(writeBans.flatMap((ban) => ban.owners))];
-const writeSelectorsOutside = (/** @type {string} */ dir) =>
-  writeBans.filter((ban) => !ban.owners.includes(dir)).map((ban) => ban.selectors);
+const allOwnedSelectors = ownedBans.map((ban) => ban.selectors);
+// Shorter paths first, so a file's block comes after its directory's and wins.
+const ownerPaths = [...new Set(ownedBans.flatMap((ban) => ban.owners))].sort(
+  (a, b) => a.length - b.length,
+);
+const ownedSelectorsOutside = (/** @type {string} */ path) =>
+  ownedBans
+    .filter((ban) => !ban.owners.some((owner) => path.startsWith(owner)))
+    .map((ban) => ban.selectors);
 
 export default defineConfig(
   { ignores: ['dist/', 'coverage/', 'src/generated/'] },
@@ -128,18 +146,18 @@ export default defineConfig(
   {
     rules: {
       ...moneyBans,
-      ...restrictedSyntax(clockSelectors, ...allWriteSelectors),
+      ...restrictedSyntax(clockSelectors, ...allOwnedSelectors),
     },
   },
   // The single exception for each money and clock ban. Spec files get none.
   { files: ['src/common/money.ts'], rules: off(moneyBanRules) },
-  { files: ['src/common/clock.ts'], rules: restrictedSyntax(...allWriteSelectors) },
-  // Each writer directory may write its own tables and no other.
-  ...ownerDirs.map((dir) => ({
-    files: [`${dir}**/*.ts`],
-    rules: restrictedSyntax(clockSelectors, ...writeSelectorsOutside(dir)),
+  { files: ['src/common/clock.ts'], rules: restrictedSyntax(...allOwnedSelectors) },
+  // Each owner may do what its own bans forbid elsewhere, and nothing else.
+  ...ownerPaths.map((path) => ({
+    files: [path.endsWith('/') ? `${path}**/*.ts` : path],
+    rules: restrictedSyntax(clockSelectors, ...ownedSelectorsOutside(path)),
   })),
   // Specs write any table, to build states the services would refuse. Last,
-  // so it wins over the writer directories for the specs inside them.
+  // so it wins over the owners for the specs inside them.
   { files: ['**/*.spec.ts'], rules: restrictedSyntax(clockSelectors) },
 );

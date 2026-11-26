@@ -57,7 +57,8 @@ const APPLICATIONS = 'src/applications/applications.service.ts';
 const UPLOADS = 'src/uploads/uploads.service.ts';
 const DOCUMENTS = 'src/documents/documents.service.ts';
 const EXTRACTION = 'src/extraction/extraction-writer.ts';
-const WRITERS = [APPLICATIONS, UPLOADS, DOCUMENTS, EXTRACTION];
+const DUE_DATE = 'src/documents/due-date.ts';
+const WRITERS = [APPLICATIONS, UPLOADS, DOCUMENTS, EXTRACTION, DUE_DATE];
 /** A spec inside a writer directory, whose own config block it must override. */
 const UPLOADS_SPEC = 'src/uploads/uploads.spec.ts';
 
@@ -160,15 +161,26 @@ const lineAndTaxWrites = {
     "export const f = () => tx.$executeRawUnsafe('UPDATE \"public\".document_taxes SET amount = 1');\n",
 };
 
-/** Each table's write cases, and the files that may make them. */
-const tableWrites = [
-  { table: 'document_images', owners: [UPLOADS], cases: documentImageWrites },
-  { table: 'extraction_jobs creates', owners: [UPLOADS, DOCUMENTS], cases: extractionJobCreates },
-  { table: 'extraction_jobs updates and deletes', owners: [EXTRACTION], cases: extractionJobChanges },
-  { table: 'document_lines and document_taxes', owners: [EXTRACTION], cases: lineAndTaxWrites },
+const dueDateComputations = {
+  'dueDate: addDays(…)': 'export const f = (issueDate: string) => ({ dueDate: addDays(issueDate, 30) });\n',
+};
+
+/**
+ * Each ban's error cases, and the files where they're allowed. due-date.ts is
+ * in src/documents/, so it keeps that directory's exception too.
+ */
+const ownedBans = [
+  { ban: 'document_images', owners: [UPLOADS], cases: documentImageWrites },
+  { ban: 'extraction_jobs creates', owners: [UPLOADS, DOCUMENTS, DUE_DATE], cases: extractionJobCreates },
+  { ban: 'extraction_jobs updates and deletes', owners: [EXTRACTION], cases: extractionJobChanges },
+  { ban: 'document_lines and document_taxes', owners: [EXTRACTION], cases: lineAndTaxWrites },
+  { ban: 'due dates (D4)', owners: [DUE_DATE], cases: dueDateComputations },
 ];
 
-const tableReads = {
+const allowedCode = {
+  'addDays for something other than a due date':
+    'export const f = (date: string) => ({ cutoff: addDays(date, -6) });\n',
+  '{ dueDate: typedDueDate }': 'export const f = (typedDueDate: string) => ({ dueDate: typedDueDate });\n',
   'tx.documentImage.findMany(…)': 'export const f = () => tx.documentImage.findMany({ where: {} });\n',
   'tx.extractionJob.findFirst(…)': 'export const f = () => tx.extractionJob.findFirst({ where: {} });\n',
   'include: { images: { orderBy } }':
@@ -242,7 +254,7 @@ describe('backend lint bans', () => {
     });
   });
 
-  describe.each(tableWrites)('$table', ({ owners, cases }) => {
+  describe.each(ownedBans)('$ban', ({ owners, cases }) => {
     const others = [MAIN, CLOCK, ...WRITERS.filter((file) => !owners.includes(file))];
 
     it.each(Object.entries(cases))('%s is an error outside its writers', async (_, code) => {
@@ -258,8 +270,8 @@ describe('backend lint bans', () => {
     });
   });
 
-  describe('table reads', () => {
-    it.each(Object.entries(tableReads))('%s is allowed anywhere', async (_, code) => {
+  describe('reads and other allowed code', () => {
+    it.each(Object.entries(allowedCode))('%s is allowed anywhere', async (_, code) => {
       expect(await banErrors(MAIN, code)).toEqual([]);
     });
 
@@ -281,6 +293,7 @@ describe('backend lint bans', () => {
       ...extractionJobCreates,
       ...extractionJobChanges,
       ...lineAndTaxWrites,
+      ...dueDateComputations,
     };
 
     it('every ban entry outside the exceptions has an error case that needs it', async () => {
