@@ -27,7 +27,11 @@ import type {
 } from './balances.types.js';
 import { summarizeErrors } from './error-summary.js';
 import { suggestTermDays } from '../documents/due-date.js';
-import type { Issue } from '../documents/issues.js';
+import { findSuspectedDuplicate } from '../documents/duplicate-suspected-check.js';
+import {
+  normalizeStoredIssues,
+  openIssueCodes,
+} from '../documents/issues.js';
 
 interface SupplierSumsRow {
   id: string;
@@ -47,17 +51,21 @@ interface ErrorRow {
   type: ErrorDocumentRow['type'];
   letter: string | null;
   number: string | null;
+  number_normalized: string | null;
   supplier_id: string | null;
   supplier_name: string | null;
   issue_date: string | null;
   total: string | null;
   created_by_name: string;
   created_on: string;
-  issues: Issue[];
+  issues: unknown;
   raw_output: unknown;
 }
 
-function toErrorDocument(row: ErrorRow): ErrorDocumentRow {
+function toErrorDocument(
+  row: ErrorRow,
+  suspectedDuplicateId: string | null = null,
+): ErrorDocumentRow {
   return {
     id: row.id,
     type: row.type,
@@ -71,8 +79,9 @@ function toErrorDocument(row: ErrorRow): ErrorDocumentRow {
     total: row.total === null ? null : Money.fromString(row.total).toString(),
     createdByName: row.created_by_name,
     createdOn: row.created_on,
-    issues: row.issues.map((issue) => issue.code),
+    issues: openIssueCodes(normalizeStoredIssues(row.issues)),
     suggestedTermDays: suggestTermDays(row.raw_output, row.issue_date),
+    suspectedDuplicateId,
   };
 }
 
@@ -237,18 +246,44 @@ export class BalancesService {
         balance: sum('balance'),
       },
       today: date,
-      errors: summarizeErrors(errorRows.map(toErrorDocument)),
+      errors: summarizeErrors(errorRows.map((row) => toErrorDocument(row))),
     };
   }
 
   /**
    * *A resolver*: every *Error* document that isn't deleted (D3), oldest
-   * upload first, and the warning computed from those same rows.
+   * upload first, and the warning computed from those same rows in one snapshot.
    */
   async errorDocuments(): Promise<ErrorDocumentList> {
-    const rows = await this.prisma.$queryRaw<ErrorRow[]>(this.errorRows());
-    const documents = rows.map(toErrorDocument);
-    return { summary: summarizeErrors(documents), documents };
+    return this.prisma.$transaction(
+      async (tx) => {
+        const rows = await tx.$queryRaw<ErrorRow[]>(this.errorRows());
+        const documents: ErrorDocumentRow[] = [];
+        for (const row of rows) {
+          const openIssues = openIssueCodes(normalizeStoredIssues(row.issues));
+          let suspectedDuplicateId: string | null = null;
+          if (
+            openIssues.includes('duplicate_suspected') &&
+            row.type !== 'opening_balance' &&
+            row.supplier_id !== null &&
+            row.issue_date !== null &&
+            row.total !== null
+          ) {
+            const match = await findSuspectedDuplicate(tx, {
+              documentId: row.id,
+              supplierId: row.supplier_id,
+              issueDate: row.issue_date,
+              total: Money.fromString(row.total).toString(),
+              hasNumber: row.number_normalized !== null,
+            });
+            suspectedDuplicateId = match?.id ?? null;
+          }
+          documents.push(toErrorDocument(row, suspectedDuplicateId));
+        }
+        return { summary: summarizeErrors(documents), documents };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 
   /**
@@ -497,7 +532,8 @@ export class BalancesService {
   private errorRows(): Prisma.Sql {
     const localCreatedAt = Prisma.sql`(d.created_at AT TIME ZONE ${BUSINESS_TIME_ZONE}::text)`;
     return Prisma.sql`
-      SELECT d.id, d.type, d.letter, d.number, d.supplier_id, s.name AS supplier_name,
+      SELECT d.id, d.type, d.letter, d.number, d.number_normalized,
+             d.supplier_id, s.name AS supplier_name,
              to_char(d.issue_date, 'YYYY-MM-DD') AS issue_date, d.total::text AS total,
              u.name AS created_by_name,
              to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,

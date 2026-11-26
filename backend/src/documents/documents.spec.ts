@@ -722,6 +722,13 @@ describe('documents', () => {
         cae: null,
         notes: 'Pedido de octubre',
         issues: [],
+        acceptedIssues: [],
+        suspectedDuplicate: null,
+        consistencySummary: {
+          taxSum: null,
+          subtotalPlusTaxes: null,
+          lineTotalSum: null,
+        },
         lines: [],
         taxes: [],
       });
@@ -857,6 +864,67 @@ describe('documents', () => {
           amount: '0.00',
         },
       ]);
+      expect(body.consistencySummary).toEqual({
+        taxSum: '8688.19',
+        subtotalPlusTaxes: '50010.50',
+        lineTotalSum: '24818.40',
+      });
+    });
+
+    it('separates open issues from acceptedIssues with user name and Buenos Aires time, and resolves suspectedDuplicate', async () => {
+      const supplierId = await newSupplier(30);
+      const existingId = await enter(
+        invoice(supplierId, {
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          issueDate: '2026-10-15',
+          total: '12345.67',
+        }),
+      );
+      const { id } = await prisma.document.create({
+        data: {
+          source: 'upload',
+          reviewStatus: 'error',
+          type: 'delivery_note',
+          supplierId,
+          letter: 'X',
+          number: null,
+          numberNormalized: null,
+          issueDate: new Date('2026-10-15T00:00:00Z'),
+          total: '12345.67',
+          issues: [
+            { code: 'duplicate_suspected' },
+            {
+              code: 'wrong_recipient',
+              acceptedBy: ana.id,
+              acceptedAt: '2026-11-10T02:15:00.000Z',
+            },
+          ],
+          createdById: ana.id,
+        },
+      });
+
+      const res = await read(id).expect(200);
+      expect(res.body).toMatchObject({
+        issues: ['duplicate_suspected'],
+        acceptedIssues: [
+          {
+            code: 'wrong_recipient',
+            acceptedByName: 'Ana',
+            acceptedOn: '2026-11-09',
+            acceptedTime: '23:15',
+          },
+        ],
+        suspectedDuplicate: {
+          id: existingId,
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          issueDate: '2026-10-15',
+          total: '12345.67',
+        },
+      });
     });
 
     it.each([

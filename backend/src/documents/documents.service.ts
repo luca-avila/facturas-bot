@@ -3,9 +3,14 @@ import { ApplicationsService } from '../applications/applications.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { SessionUser } from '../auth/session.js';
 import { BalancesService } from '../balances/balances.service.js';
-import { BUSINESS_TIME_ZONE, now } from '../common/clock.js';
+import {
+  BUSINESS_TIME_ZONE,
+  formatBuenosAiresTimestamp,
+  now,
+} from '../common/clock.js';
 import { fromDbDate, toDbDate } from '../common/dates.js';
 import { conflict, invalidRequest } from '../common/field-errors.js';
+import { Money } from '../common/money.js';
 import { uniqueViolationIndex } from '../common/unique-violation.js';
 import { isUuid } from '../common/uuid.js';
 import {
@@ -17,6 +22,10 @@ import {
   type TaxKind,
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import {
+  summarizeConsistency,
+  type ConsistencySummary,
+} from './consistency-checks.js';
 import { normalizeNumber } from './document-number.js';
 import type {
   ManualDocumentFields,
@@ -24,10 +33,30 @@ import type {
 } from './document-input.js';
 import { resolveDueDate, suggestTermDays } from './due-date.js';
 import { DuplicateNumberCheck } from './duplicate-number-check.js';
-import type { Issue, IssueCode } from './issues.js';
+import {
+  DuplicateSuspectedCheck,
+  type SuspectedDuplicateRef,
+} from './duplicate-suspected-check.js';
+import {
+  isAcceptedIssue,
+  normalizeStoredIssues,
+  openIssueCodes,
+  type AcceptableIssueCode,
+  type Issue,
+  type IssueCode,
+} from './issues.js';
 
 /** Invariant 7. Only this index means a duplicate document number. */
 const NUMBER_INDEX = 'documents_number_unique';
+
+export interface AcceptedIssueDetail {
+  code: AcceptableIssueCode;
+  acceptedByName: string;
+  /** YYYY-MM-DD in Buenos Aires. */
+  acceptedOn: string;
+  /** HH:MM in Buenos Aires. */
+  acceptedTime: string;
+}
 
 /** One document for *Documento*. */
 export interface DocumentDetail {
@@ -57,8 +86,14 @@ export interface DocumentDetail {
   suggestedTermDays: number | null;
   cae: string | null;
   notes: string | null;
-  /** Codes, in stored order. */
+  /** Open codes only, in stored order. */
   issues: IssueCode[];
+  /** Accepted issues, in stored order, with Buenos Aires timestamps. */
+  acceptedIssues: AcceptedIssueDetail[];
+  /** Matching counted document when `duplicate_suspected` is open. */
+  suspectedDuplicate: SuspectedDuplicateRef | null;
+  /** Backend-computed consistency sums for display (D1). */
+  consistencySummary: ConsistencySummary;
   /** By position. */
   lines: DocumentLineDetail[];
   /** By kind, label, amount and id. */
@@ -93,6 +128,7 @@ interface DetailRow {
   type: DocumentType | null;
   letter: string | null;
   number: string | null;
+  number_normalized: string | null;
   created_by_name: string;
   created_on: string;
   created_time: string;
@@ -109,7 +145,7 @@ interface DetailRow {
   total: string | null;
   cae: string | null;
   notes: string | null;
-  issues: Issue[];
+  issues: unknown;
 }
 
 /**
@@ -124,6 +160,7 @@ export class DocumentsService {
     private readonly applications: ApplicationsService,
     private readonly balances: BalancesService,
     private readonly duplicateCheck: DuplicateNumberCheck,
+    private readonly duplicateSuspectedCheck: DuplicateSuspectedCheck,
   ) {}
 
   /** Saves a document a person typed in. It counts at once, as reviewed by them. */
@@ -200,6 +237,7 @@ export class DocumentsService {
       async (tx) => {
         const [row] = await tx.$queryRaw<DetailRow[]>`
           SELECT d.id, d.source, d.review_status, d.type, d.letter, d.number,
+                 d.number_normalized,
                  cu.name AS created_by_name,
                  to_char(${localCreatedAt}, 'YYYY-MM-DD') AS created_on,
                  to_char(${localCreatedAt}, 'HH24:MI') AS created_time,
@@ -250,6 +288,59 @@ export class DocumentsService {
                 : applied.received
               ).toString();
 
+        const storedIssues = normalizeStoredIssues(row.issues);
+        const openIssues = openIssueCodes(storedIssues);
+        const acceptedStored = storedIssues.filter(isAcceptedIssue);
+        let acceptedIssues: AcceptedIssueDetail[] = [];
+        if (acceptedStored.length > 0) {
+          const userIds = [
+            ...new Set(acceptedStored.map((issue) => issue.acceptedBy)),
+          ];
+          const users = await tx.user.findMany({
+            where: { id: { in: userIds } },
+            select: { id: true, name: true },
+          });
+          const namesById = new Map(users.map((u) => [u.id, u.name]));
+          acceptedIssues = acceptedStored.map((issue) => {
+            const { date, time } = formatBuenosAiresTimestamp(issue.acceptedAt);
+            return {
+              code: issue.code,
+              acceptedByName: namesById.get(issue.acceptedBy) ?? 'Usuario',
+              acceptedOn: date,
+              acceptedTime: time,
+            };
+          });
+        }
+
+        let suspectedDuplicate: SuspectedDuplicateRef | null = null;
+        if (
+          openIssues.includes('duplicate_suspected') &&
+          row.type !== 'opening_balance' &&
+          row.supplier_id !== null &&
+          row.issue_date !== null &&
+          row.total !== null
+        ) {
+          suspectedDuplicate = await this.duplicateSuspectedCheck.findMatch(
+            tx,
+            {
+              documentId: row.id,
+              supplierId: row.supplier_id,
+              issueDate: row.issue_date,
+              total: Money.fromString(row.total).toString(),
+              hasNumber: row.number_normalized !== null,
+            },
+          );
+        }
+
+        const consistencySummary = summarizeConsistency({
+          subtotal: row.subtotal === null ? null : Money.fromString(row.subtotal),
+          taxes: taxes.map((tax) => ({ amount: Money.fromString(tax.amount) })),
+          lines: lines.map((line) => ({
+            lineTotal:
+              line.lineTotal === null ? null : Money.fromString(line.lineTotal),
+          })),
+        });
+
         return {
           id: row.id,
           source: row.source,
@@ -284,7 +375,10 @@ export class DocumentsService {
           ),
           cae: row.cae,
           notes: row.notes,
-          issues: row.issues.map((issue) => issue.code),
+          issues: openIssues,
+          acceptedIssues,
+          suspectedDuplicate,
+          consistencySummary,
           lines,
           taxes,
         };

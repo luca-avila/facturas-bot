@@ -238,6 +238,13 @@ describe('uploads', () => {
         cae: null,
         notes: null,
         issues: [],
+        acceptedIssues: [],
+        suspectedDuplicate: null,
+        consistencySummary: {
+          taxSum: null,
+          subtotalPlusTaxes: null,
+          lineTotalSum: null,
+        },
         lines: [],
         taxes: [],
       });

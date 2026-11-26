@@ -108,6 +108,7 @@ describe('GET /api/error-documents', () => {
         createdOn: '2026-11-07',
         issues: ['extraction_failed'],
         suggestedTermDays: null,
+        suspectedDuplicateId: null,
       },
       {
         id: newer,
@@ -121,6 +122,7 @@ describe('GET /api/error-documents', () => {
         createdOn: '2026-11-08',
         issues: ['supplier_term_missing'],
         suggestedTermDays: null,
+        suspectedDuplicateId: null,
       },
     ]);
   });
@@ -201,5 +203,53 @@ describe('GET /api/error-documents', () => {
     });
     expect(auditLogs).toHaveLength(1);
     expect(auditLogs[0].userId).toBe(ana.id);
+  });
+
+  it('exposes only open issues and resolves suspectedDuplicateId when duplicate_suspected is open', async () => {
+    const supplier = await prisma.supplier.create({
+      data: { name: `Dup ${randomUUID()}`, paymentTermDays: 30 },
+    });
+    const existing = await prisma.document.create({
+      data: {
+        source: 'manual',
+        reviewStatus: 'reviewed',
+        type: 'delivery_note',
+        supplierId: supplier.id,
+        letter: 'X',
+        number: null,
+        numberNormalized: null,
+        issueDate: new Date('2026-11-05T00:00:00Z'),
+        dueDate: new Date('2026-12-05T00:00:00Z'),
+        dueDateSource: 'supplier_term',
+        total: '4500.00',
+        createdById: ana.id,
+        reviewedById: ana.id,
+        reviewedAt: new Date('2026-11-05T15:00:00Z'),
+      },
+    });
+    const dupId = await upload('2026-11-10T15:00:00Z', {
+      type: 'delivery_note',
+      supplierId: supplier.id,
+      letter: 'X',
+      number: null,
+      numberNormalized: null,
+      issueDate: new Date('2026-11-05T00:00:00Z'),
+      total: '4500.00',
+      issues: [
+        { code: 'duplicate_suspected' },
+        {
+          code: 'wrong_recipient',
+          acceptedBy: ana.id,
+          acceptedAt: '2026-11-10T15:05:00.000Z',
+        },
+      ],
+    });
+
+    const { documents } = await list();
+    const row = documents.find((d) => d.id === dupId);
+    expect(row).toMatchObject({
+      issues: ['duplicate_suspected'],
+      suspectedDuplicateId: existing.id,
+    });
   });
 });
