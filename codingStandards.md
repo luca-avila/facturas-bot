@@ -47,10 +47,6 @@ Check: a call to the LLM client inside a transaction callback.
 Why: when a lease expires after a crash, another run picks up the job.
 Check: a job step that writes without accounting for what an earlier run may have left.
 
-### E3. `raw_output` is never edited
-Why: comparing it with the final data is how extraction gets measured.
-Check: any update to `extraction_jobs.raw_output` after the job finishes.
-
 ### E4. Changing the prompt or the schema bumps `prompt_version`
 Why: otherwise a result can't be traced to what produced it.
 Check: a diff that touches either one and leaves `prompt_version` as it was.

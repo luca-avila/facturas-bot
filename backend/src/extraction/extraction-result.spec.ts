@@ -372,8 +372,9 @@ describe('ExtractionWriter: writing the result', () => {
     const id = await extract(invoiceOutput({ supplierCuit: KNOWN_CUIT }));
     await h.prisma.$executeRaw`
       UPDATE documents SET review_status = 'processing' WHERE id = ${id}::uuid`;
-    // raw_output is written once (E3), so a requeued job couldn't store a
-    // second one: the second run gets a fresh job row instead.
+    // raw_output is written once (the extraction_jobs_keep_raw_output
+    // trigger), so a requeued job couldn't store a second one: the second
+    // run gets a fresh job row instead.
     await h.prisma
       .$executeRaw`DELETE FROM extraction_jobs WHERE document_id = ${id}::uuid`;
     await h.prisma.$executeRaw`

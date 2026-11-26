@@ -164,7 +164,7 @@ model ExtractionJob {
   lockedUntil   DateTime?           @map("locked_until") @db.Timestamptz(6)
   model         String?
   promptVersion String?             @map("prompt_version")
-  /// The model's JSON, written once (E3).
+  /// The model's JSON, written once (the extraction_jobs_keep_raw_output trigger).
   rawOutput     Json?               @map("raw_output")
   lastError     String?             @map("last_error")
   createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
