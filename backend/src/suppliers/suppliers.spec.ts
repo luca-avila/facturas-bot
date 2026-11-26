@@ -8,6 +8,7 @@ import {
   type CreatedTestUser,
 } from '../../test/app.js';
 import { SUPPLIER_SPEC_CUITS } from '../../test/test-cuits.js';
+import { DuplicateNumberCheck } from '../documents/duplicate-number-check.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 /**
@@ -298,6 +299,450 @@ describe('suppliers', () => {
       ['a non-UUID id', 'not-a-uuid'],
     ])('returns 404 for %s', async (_, id) => {
       await put(id, input()).expect(404);
+    });
+  });
+
+  describe('term preview and save (Definir plazo)', () => {
+    const preview = (id: string, body: unknown) =>
+      http()
+        .post(`/api/suppliers/${id}/term/preview`)
+        .set('Cookie', `session=${session}`)
+        .send(body as object);
+
+    const setTerm = (id: string, body: unknown) =>
+      http()
+        .post(`/api/suppliers/${id}/term`)
+        .set('Cookie', `session=${session}`)
+        .send(body as object);
+
+    async function doc(data: Record<string, unknown>): Promise<string> {
+      const { id } = await prisma.document.create({
+        data: {
+          source: 'upload',
+          reviewStatus: 'error',
+          createdById: ana.id,
+          ...(data as object),
+        } as never,
+      });
+      return id;
+    }
+
+    it('validates input and returns 404 for missing or invalid supplier ids', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      for (const bad of [-1, 366, 1.5]) {
+        for (const call of [preview, setTerm]) {
+          const res = await call(supplierId, { paymentTermDays: bad }).expect(
+            400,
+          );
+          expect(res.body).toEqual({
+            errors: [{ field: 'paymentTermDays', code: 'payment_term_invalid' }],
+          });
+        }
+      }
+      for (const malformed of [{}, { paymentTermDays: '30' }, { paymentTermDays: 30, extra: 1 }]) {
+        await preview(supplierId, malformed).expect(400);
+        await setTerm(supplierId, malformed).expect(400);
+      }
+      for (const badId of ['nope', randomUUID()]) {
+        await preview(badId, { paymentTermDays: 30 }).expect(404);
+        await setTerm(badId, { paymentTermDays: 30 }).expect(404);
+      }
+    });
+
+    it('previews identically to save without mutating DB, then unblocks eligible error docs and updates others', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      const otherSupplierId = await create({ paymentTermDays: null });
+
+      const cleanInvoice = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0001-00000001',
+        numberNormalized: '000100000001',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        total: '1000.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        createdAt: new Date('2026-11-01T10:00:00Z'),
+      });
+      const missingTotal = await doc({
+        type: 'delivery_note',
+        letter: null,
+        number: '0001-00000002',
+        numberNormalized: '000100000002',
+        supplierId,
+        issueDate: new Date('2026-10-02'),
+        total: null,
+        issues: [{ code: 'missing_total' }, { code: 'supplier_term_missing' }],
+        createdAt: new Date('2026-11-01T10:01:00Z'),
+      });
+      const missingIssueDate = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0001-00000003',
+        numberNormalized: '000100000003',
+        supplierId,
+        issueDate: null,
+        total: '500.00',
+        issues: [
+          { code: 'missing_issue_date' },
+          { code: 'supplier_term_missing' },
+        ],
+        createdAt: new Date('2026-11-01T10:02:00Z'),
+      });
+      // Error doc without supplier_term_missing -> untouched
+      const onlyMissingTotal = await doc({
+        type: 'invoice',
+        supplierId,
+        issueDate: new Date('2026-10-03'),
+        dueDate: new Date('2026-10-20'),
+        dueDateSource: 'manual',
+        total: null,
+        issues: [{ code: 'missing_total' }],
+        createdAt: new Date('2026-11-01T10:03:00Z'),
+      });
+      // Non-error, deleted, and other supplier docs -> untouched
+      const unreviewed = await doc({
+        reviewStatus: 'unreviewed',
+        type: 'invoice',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        dueDate: new Date('2026-10-15'),
+        dueDateSource: 'manual',
+        total: '200.00',
+        issues: [],
+      });
+      const reviewed = await doc({
+        reviewStatus: 'reviewed',
+        type: 'invoice',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        dueDate: new Date('2026-10-15'),
+        dueDateSource: 'manual',
+        total: '300.00',
+        issues: [],
+        reviewedById: ana.id,
+        reviewedAt: new Date('2026-11-01T10:00:00Z'),
+      });
+      const processing = await doc({
+        reviewStatus: 'processing',
+        supplierId,
+        issues: [],
+      });
+      const deleted = await doc({
+        type: 'invoice',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        total: '400.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        deletedAt: new Date('2026-11-02T00:00:00Z'),
+      });
+      const otherSupplierDoc = await doc({
+        type: 'invoice',
+        supplierId: otherSupplierId,
+        issueDate: new Date('2026-10-01'),
+        total: '400.00',
+        issues: [{ code: 'supplier_term_missing' }],
+      });
+
+      const previewRes = await preview(supplierId, {
+        paymentTermDays: 30,
+      }).expect(200);
+      expect(previewRes.body).toEqual({
+        paymentTermDays: 30,
+        unblockedCount: 1,
+        documents: [
+          {
+            id: cleanInvoice,
+            type: 'invoice',
+            letter: 'A',
+            number: '0001-00000001',
+            issueDate: '2026-10-01',
+            dueDate: '2026-10-31',
+            willUnblock: true,
+            remainingIssues: [],
+          },
+          {
+            id: missingTotal,
+            type: 'delivery_note',
+            letter: null,
+            number: '0001-00000002',
+            issueDate: '2026-10-02',
+            dueDate: '2026-11-01',
+            willUnblock: false,
+            remainingIssues: ['missing_total'],
+          },
+          {
+            id: missingIssueDate,
+            type: 'invoice',
+            letter: 'A',
+            number: '0001-00000003',
+            issueDate: null,
+            dueDate: null,
+            willUnblock: false,
+            remainingIssues: ['missing_issue_date'],
+          },
+        ],
+      });
+
+      // Preview did not mutate DB
+      expect(
+        (await prisma.supplier.findUniqueOrThrow({ where: { id: supplierId } }))
+          .paymentTermDays,
+      ).toBeNull();
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: cleanInvoice } }))
+          .reviewStatus,
+      ).toBe('error');
+
+      const saveRes = await setTerm(supplierId, {
+        paymentTermDays: 30,
+      }).expect(200);
+      expect(saveRes.body).toEqual(previewRes.body);
+
+      const savedSupplier = await prisma.supplier.findUniqueOrThrow({
+        where: { id: supplierId },
+      });
+      expect(savedSupplier.paymentTermDays).toBe(30);
+
+      const savedClean = await prisma.document.findUniqueOrThrow({
+        where: { id: cleanInvoice },
+      });
+      expect(savedClean.reviewStatus).toBe('unreviewed');
+      expect(savedClean.reviewedById).toBeNull();
+      expect(savedClean.reviewedAt).toBeNull();
+      expect(savedClean.dueDate?.toISOString().slice(0, 10)).toBe('2026-10-31');
+      expect(savedClean.dueDateSource).toBe('supplier_term');
+      expect(savedClean.issues).toEqual([]);
+
+      const savedMissingTotal = await prisma.document.findUniqueOrThrow({
+        where: { id: missingTotal },
+      });
+      expect(savedMissingTotal.reviewStatus).toBe('error');
+      expect(savedMissingTotal.dueDate?.toISOString().slice(0, 10)).toBe(
+        '2026-11-01',
+      );
+      expect(savedMissingTotal.dueDateSource).toBe('supplier_term');
+      expect(savedMissingTotal.issues).toEqual([{ code: 'missing_total' }]);
+
+      const savedMissingDate = await prisma.document.findUniqueOrThrow({
+        where: { id: missingIssueDate },
+      });
+      expect(savedMissingDate.reviewStatus).toBe('error');
+      expect(savedMissingDate.dueDate).toBeNull();
+      expect(savedMissingDate.issues).toEqual([
+        { code: 'missing_issue_date' },
+      ]);
+
+      // Untouched rows
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: onlyMissingTotal } }))
+          .dueDate?.toISOString()
+          .slice(0, 10),
+      ).toBe('2026-10-20');
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: unreviewed } }))
+          .dueDate?.toISOString()
+          .slice(0, 10),
+      ).toBe('2026-10-15');
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: reviewed } }))
+          .reviewedById,
+      ).toBe(ana.id);
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: processing } }))
+          .reviewStatus,
+      ).toBe('processing');
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: deleted } }))
+          .reviewStatus,
+      ).toBe('error');
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: otherSupplierDoc } }))
+          .reviewStatus,
+      ).toBe('error');
+
+      // Audit logs written for supplier and changed error documents
+      expect(
+        await prisma.auditLog.count({
+          where: { entity: 'suppliers', entityId: supplierId, action: 'update' },
+        }),
+      ).toBe(1);
+      for (const changedId of [cleanInvoice, missingTotal, missingIssueDate]) {
+        const logs = await prisma.auditLog.findMany({
+          where: { entity: 'documents', entityId: changedId, action: 'update' },
+        });
+        expect(logs).toHaveLength(1);
+        expect(logs[0].userId).toBe(ana.id);
+      }
+      expect(
+        await prisma.auditLog.count({
+          where: { entity: 'documents', entityId: onlyMissingTotal },
+        }),
+      ).toBe(0);
+    });
+
+    it('unblocks only the oldest of two duplicate error documents and keeps the second in error with duplicate_number', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      const older = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0003-00000123',
+        numberNormalized: '000300000123',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        total: '1000.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        createdAt: new Date('2026-11-01T10:00:00Z'),
+      });
+      const newer = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0003 00000123',
+        numberNormalized: '000300000123',
+        supplierId,
+        issueDate: new Date('2026-10-02'),
+        total: '1000.00',
+        issues: [{ code: 'supplier_term_missing' }],
+        createdAt: new Date('2026-11-01T10:05:00Z'),
+      });
+
+      const res = await setTerm(supplierId, { paymentTermDays: 30 }).expect(
+        200,
+      );
+      expect(res.body).toEqual({
+        paymentTermDays: 30,
+        unblockedCount: 1,
+        documents: [
+          expect.objectContaining({
+            id: older,
+            willUnblock: true,
+            remainingIssues: [],
+          }),
+          expect.objectContaining({
+            id: newer,
+            willUnblock: false,
+            remainingIssues: ['duplicate_number'],
+          }),
+        ],
+      });
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: older } }))
+          .reviewStatus,
+      ).toBe('unreviewed');
+      expect(
+        (await prisma.document.findUniqueOrThrow({ where: { id: newer } }))
+          .reviewStatus,
+      ).toBe('error');
+    });
+
+    it('retries once on P2002 from documents_number_unique and marks the colliding document with duplicate_number', async () => {
+      let calls = 0;
+      const customApp = await createTestApp((builder) =>
+        builder.overrideProvider(DuplicateNumberCheck).useValue({
+          exists: () => {
+            calls += 1;
+            // First check misses so P2002 triggers on DB unique index; retry sees false or forcedDuplicateIds
+            return Promise.resolve(false);
+          },
+        }),
+      );
+      try {
+        const customPrisma = customApp.get(PrismaService);
+        const user = await createUser(customApp);
+        const cookie = await signIn(customApp, user);
+        const supplier = await customPrisma.supplier.create({
+          data: { name: `Dup ${randomUUID()}`, paymentTermDays: null },
+        });
+        await customPrisma.document.create({
+          data: {
+            source: 'manual',
+            reviewStatus: 'reviewed',
+            type: 'invoice',
+            letter: 'A',
+            number: '0001-00009999',
+            numberNormalized: '000100009999',
+            supplierId: supplier.id,
+            issueDate: new Date('2026-10-01'),
+            dueDate: new Date('2026-10-31'),
+            dueDateSource: 'manual',
+            total: '500.00',
+            createdById: user.id,
+            reviewedById: user.id,
+            reviewedAt: new Date('2026-11-01T10:00:00Z'),
+          },
+        });
+        const errorDoc = await customPrisma.document.create({
+          data: {
+            source: 'upload',
+            reviewStatus: 'error',
+            type: 'invoice',
+            letter: 'A',
+            number: '0001-00009999',
+            numberNormalized: '000100009999',
+            supplierId: supplier.id,
+            issueDate: new Date('2026-10-02'),
+            total: '500.00',
+            issues: [{ code: 'supplier_term_missing' }],
+            createdById: user.id,
+          },
+        });
+
+        const res = await request(customApp.getHttpServer())
+          .post(`/api/suppliers/${supplier.id}/term`)
+          .set('Cookie', `session=${cookie}`)
+          .send({ paymentTermDays: 15 })
+          .expect(200);
+        expect(calls).toBeGreaterThanOrEqual(1);
+        expect(res.body).toEqual({
+          paymentTermDays: 15,
+          unblockedCount: 0,
+          documents: [
+            expect.objectContaining({
+              id: errorDoc.id,
+              dueDate: '2026-10-17',
+              willUnblock: false,
+              remainingIssues: ['duplicate_number'],
+            }),
+          ],
+        });
+        const after = await customPrisma.document.findUniqueOrThrow({
+          where: { id: errorDoc.id },
+        });
+        expect(after.reviewStatus).toBe('error');
+        expect(after.issues).toEqual([{ code: 'duplicate_number' }]);
+      } finally {
+        await customApp.close();
+      }
+    });
+
+    it('handles concurrent setTerm calls without invariant violations', async () => {
+      const supplierId = await create({ paymentTermDays: null });
+      const docId = await doc({
+        type: 'invoice',
+        letter: 'A',
+        number: '0004-00000001',
+        numberNormalized: '000400000001',
+        supplierId,
+        issueDate: new Date('2026-10-01'),
+        total: '1000.00',
+        issues: [{ code: 'supplier_term_missing' }],
+      });
+
+      const [r1, r2] = await Promise.all([
+        setTerm(supplierId, { paymentTermDays: 30 }),
+        setTerm(supplierId, { paymentTermDays: 45 }),
+      ]);
+      expect(r1.status).toBe(200);
+      expect(r2.status).toBe(200);
+
+      const finalSupplier = await prisma.supplier.findUniqueOrThrow({
+        where: { id: supplierId },
+      });
+      const finalDoc = await prisma.document.findUniqueOrThrow({
+        where: { id: docId },
+      });
+      expect(finalDoc.reviewStatus).toBe('unreviewed');
+      expect([30, 45]).toContain(finalSupplier.paymentTermDays);
     });
   });
 });

@@ -51,6 +51,8 @@ describe('every route', () => {
         'post /api/suppliers',
         'get /api/suppliers/:id',
         'put /api/suppliers/:id',
+        'post /api/suppliers/:id/term/preview',
+        'post /api/suppliers/:id/term',
         'post /api/documents',
         'put /api/documents/:id',
         'post /api/documents/:id/review',

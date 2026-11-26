@@ -19,8 +19,8 @@ import {
   type SupplierSort,
 } from '../balances/balances.types.js';
 import { invalidRequest } from '../common/field-errors.js';
-import { parseSupplierInput } from './supplier-input.js';
-import { SuppliersService } from './suppliers.service.js';
+import { parseSupplierInput, parseTermInput } from './supplier-input.js';
+import { SuppliersService, type TermPreview } from './suppliers.service.js';
 
 function isSupplierSort(value: string): value is SupplierSort {
   return (SUPPLIER_SORTS as readonly string[]).includes(value);
@@ -77,5 +77,24 @@ export class SuppliersController {
     @CurrentUser() user: SessionUser,
   ): Promise<void> {
     await this.suppliers.update(id, parseSupplierInput(body), user);
+  }
+
+  @Post(':id/term/preview')
+  @HttpCode(200)
+  previewTerm(
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ): Promise<TermPreview> {
+    return this.suppliers.previewTerm(id, parseTermInput(body));
+  }
+
+  @Post(':id/term')
+  @HttpCode(200)
+  setTerm(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @CurrentUser() user: SessionUser,
+  ): Promise<TermPreview> {
+    return this.suppliers.setTerm(id, parseTermInput(body), user);
   }
 }

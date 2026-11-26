@@ -15,6 +15,14 @@ const KEYS = ['name', 'legalName', 'cuit', 'paymentTermDays', 'notes'] as const;
 
 export const MAX_PAYMENT_TERM_DAYS = 365;
 
+const TERM_KEYS = ['paymentTermDays'] as const;
+
+function isValidPaymentTermDays(days: number): boolean {
+  return (
+    Number.isInteger(days) && days >= 0 && days <= MAX_PAYMENT_TERM_DAYS
+  );
+}
+
 /**
  * Reads a `SupplierInput` body. A missing key or a wrong JSON type is a
  * malformed request; user mistakes come back together as field errors.
@@ -44,11 +52,7 @@ export function parseSupplierInput(body: unknown): SupplierFields {
 
   if (
     paymentTermDays !== null &&
-    !(
-      Number.isInteger(paymentTermDays) &&
-      paymentTermDays >= 0 &&
-      paymentTermDays <= MAX_PAYMENT_TERM_DAYS
-    )
+    !isValidPaymentTermDays(paymentTermDays)
   ) {
     errors.push({ field: 'paymentTermDays', code: 'payment_term_invalid' });
   }
@@ -61,4 +65,19 @@ export function parseSupplierInput(body: unknown): SupplierFields {
     paymentTermDays,
     notes: optionalText(notes),
   };
+}
+
+/** Reads `{ paymentTermDays }` for *Definir plazo* preview and save. */
+export function parseTermInput(body: unknown): number {
+  const raw = bodyWithKeys(body, TERM_KEYS);
+  const { paymentTermDays } = raw;
+  if (typeof paymentTermDays !== 'number') {
+    throw invalidRequest();
+  }
+  if (!isValidPaymentTermDays(paymentTermDays)) {
+    throw invalidRequest([
+      { field: 'paymentTermDays', code: 'payment_term_invalid' },
+    ]);
+  }
+  return paymentTermDays;
 }
