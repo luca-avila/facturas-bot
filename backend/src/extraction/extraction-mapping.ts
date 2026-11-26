@@ -46,6 +46,8 @@ export type MappedExtraction =
       supplierCuit: string | null;
       /** Trimmed, never blank. */
       supplierName: string | null;
+      /** 11 digits with a valid check digit, or null when missing/invalid. */
+      recipientCuit: string | null;
       /** Money.toString(), never negative. */
       subtotal: string | null;
       /** Money.toString(), positive. */
@@ -143,6 +145,7 @@ export function mapExtraction(output: ExtractionOutput): MappedExtraction {
     issueDate: issueDate !== null && isIsoDate(issueDate) ? issueDate : null,
     supplierCuit: cuit(output.supplierCuit),
     supplierName: text(output.supplierName),
+    recipientCuit: cuit(output.recipientCuit),
     subtotal:
       subtotal !== null && subtotal.compare(Money.fromString('0.00')) >= 0
         ? subtotal.toString()

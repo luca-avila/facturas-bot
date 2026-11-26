@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import {
+  acceptDocumentIssue,
   deleteDocument,
   getDocument,
+  isAcceptableIssueCode,
   listErrorDocuments,
   listSuppliers,
   retryDocument,
   updateDocument,
+  type AcceptableIssueCode,
   type ApiResult,
   type ErrorDocumentList,
   type ErrorDocumentRow,
@@ -15,7 +18,7 @@ import {
   type TermPreview,
 } from '../accounts-api'
 import { documentTitle, formatDate, formatMoney } from '../format'
-import { ISSUE_MESSAGES } from '../labels'
+import { ACCEPT_ISSUE_LABELS, ISSUE_MESSAGES } from '../labels'
 import { buildUpdatePayload, initialEditValues } from './document-edit'
 import { failedSave } from './form-errors'
 import { groupResolverDocuments } from './resolver-groups'
@@ -74,11 +77,31 @@ function AResolver() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null)
   const [notice, setNotice] = useState<NoticeState | null>(null)
+  const pendingActionRef = useRef<{ kind: 'assign' | 'accept'; documentId: string } | null>(null)
 
   useEffect(() => {
     let current = true
     void listErrorDocuments().then((result) => {
-      if (current) setLoaded({ key: attempt, result })
+      if (!current) return
+      setLoaded({ key: attempt, result })
+      if (result.ok && pendingActionRef.current !== null) {
+        const pending = pendingActionRef.current
+        pendingActionRef.current = null
+        const stillInError = result.value.documents.some((doc) => doc.id === pending.documentId)
+        if (pending.kind === 'assign') {
+          setNotice({
+            text: stillInError
+              ? 'Proveedor asignado. Quedan avisos pendientes en el documento.'
+              : 'Proveedor asignado. El documento pasó a Revisado.',
+          })
+        } else {
+          setNotice({
+            text: stillInError
+              ? 'Aviso aceptado. Quedan otros avisos pendientes.'
+              : 'Aceptado. El documento pasó a Revisado.',
+          })
+        }
+      }
     })
     return () => {
       current = false
@@ -146,6 +169,21 @@ function AResolver() {
     setActionError({ id: row.id, message: firstField ?? failure.form ?? 'No pudimos descartar el documento.' })
   }
 
+  async function handleAcceptIssue(row: ErrorDocumentRow, code: AcceptableIssueCode) {
+    setBusyId(row.id)
+    setActionError(null)
+    const res = await acceptDocumentIssue(row.id, code)
+    setBusyId(null)
+    if (res.ok) {
+      pendingActionRef.current = { kind: 'accept', documentId: row.id }
+      refresh()
+      return
+    }
+    const failure = failedSave(res)
+    const firstField = Object.values(failure.fields)[0]
+    setActionError({ id: row.id, message: firstField ?? failure.form ?? 'No pudimos aceptar el aviso.' })
+  }
+
   async function handleAssignSupplier(row: ErrorDocumentRow) {
     if (picker === null || picker.documentId !== row.id) return
     if (picker.supplierId === '') {
@@ -181,7 +219,7 @@ function AResolver() {
     const updateRes = await updateDocument(row.id, payload.input)
     if (updateRes.ok) {
       setPicker(null)
-      setNotice({ text: 'Proveedor asignado. El documento pasó a Revisado.' })
+      pendingActionRef.current = { kind: 'assign', documentId: row.id }
       refresh()
       return
     }
@@ -301,10 +339,21 @@ function AResolver() {
                 const hasTermMissing = row.issues.includes('supplier_term_missing') && row.supplier !== null
                 const hasSupplierUnresolved = row.issues.includes('supplier_unresolved')
                 const hasExtractionFailed = row.issues.includes('extraction_failed')
+                const acceptableIssues = row.issues.filter(isAcceptableIssueCode)
+                const hasBothSumMismatches =
+                  acceptableIssues.includes('totals_mismatch') && acceptableIssues.includes('lines_mismatch')
                 const canDiscardInline =
                   row.issues.includes('unsupported_document') ||
                   row.issues.includes('duplicate_number') ||
+                  row.issues.includes('duplicate_suspected') ||
                   hasExtractionFailed
+                const hasInlineActions =
+                  hasTermMissing ||
+                  hasSupplierUnresolved ||
+                  hasExtractionFailed ||
+                  acceptableIssues.length > 0 ||
+                  row.suspectedDuplicateId !== null ||
+                  canDiscardInline
 
                 return (
                   <li key={row.id} className="resolver-item">
@@ -321,7 +370,7 @@ function AResolver() {
                       ))}
                     </Link>
 
-                    {(hasTermMissing || hasSupplierUnresolved || hasExtractionFailed || canDiscardInline) && (
+                    {hasInlineActions && (
                       <div className="resolver-actions">
                         {hasTermMissing && row.supplier !== null && (
                           <button
@@ -369,6 +418,28 @@ function AResolver() {
                               Cargar a mano
                             </Link>
                           </>
+                        )}
+
+                        {acceptableIssues.map((code) => (
+                          <button
+                            key={code}
+                            type="button"
+                            className="compact-btn"
+                            disabled={isBusy}
+                            onClick={() => void handleAcceptIssue(row, code)}
+                          >
+                            {hasBothSumMismatches && code === 'totals_mismatch'
+                              ? 'Aceptar totales'
+                              : hasBothSumMismatches && code === 'lines_mismatch'
+                                ? 'Aceptar ítems'
+                                : ACCEPT_ISSUE_LABELS[code]}
+                          </button>
+                        ))}
+
+                        {row.suspectedDuplicateId !== null && (
+                          <Link className="button secondary compact" to={`/documentos/${row.suspectedDuplicateId}`}>
+                            Ver el existente
+                          </Link>
                         )}
 
                         {canDiscardInline && !isConfirmingDiscard && (

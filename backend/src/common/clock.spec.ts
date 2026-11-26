@@ -1,4 +1,4 @@
-import { now, today } from './clock.js';
+import { formatBuenosAiresTimestamp, now, today } from './clock.js';
 
 describe('today', () => {
   afterEach(() => {
@@ -34,5 +34,18 @@ describe('now', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime('2026-11-10T12:34:56.789Z');
     expect(now().toISOString()).toBe('2026-11-10T12:34:56.789Z');
+  });
+});
+
+describe('formatBuenosAiresTimestamp', () => {
+  it('formats dates and 24-hour times in Buenos Aires across midnight', () => {
+    expect(formatBuenosAiresTimestamp('2026-11-10T02:30:00.000Z')).toEqual({
+      date: '2026-11-09',
+      time: '23:30',
+    });
+    expect(formatBuenosAiresTimestamp('2026-11-10T03:05:00.000Z')).toEqual({
+      date: '2026-11-10',
+      time: '00:05',
+    });
   });
 });

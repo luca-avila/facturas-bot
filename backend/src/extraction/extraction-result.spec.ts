@@ -389,4 +389,227 @@ describe('ExtractionWriter: writing the result', () => {
     );
     expect(await h.taxes(id)).toHaveLength(1);
   });
+
+  describe('acceptable consistency and recipient checks', () => {
+    it('flags totals_mismatch, lines_mismatch, and wrong_recipient in ISSUE_CODES order and leaves lines/taxes readable', async () => {
+      await known(30);
+      const base = invoiceOutput({ supplierCuit: KNOWN_CUIT });
+      const id = await extract({
+        ...base,
+        total: '50010.00',
+        recipientCuit: NEW_CUIT,
+        lines: [{ ...base.lines[0], lineTotal: '1000.00' }],
+      });
+      expect(await h.document(id)).toMatchObject({
+        review_status: 'error',
+        issues: [
+          { code: 'totals_mismatch' },
+          { code: 'lines_mismatch' },
+          { code: 'wrong_recipient' },
+        ],
+      });
+      expect(await h.lines(id)).toHaveLength(1);
+      expect(await h.taxes(id)).toHaveLength(1);
+    });
+
+    it('lets a delivery note with no taxes, no prices on lines, and no recipient CUIT pass to unreviewed', async () => {
+      await known(30);
+      const id = await extract(
+        invoiceOutput({
+          supplierCuit: KNOWN_CUIT,
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          subtotal: null,
+          taxes: [],
+          recipientCuit: null,
+          total: '50000.00',
+          lines: [
+            {
+              productCode: null,
+              description: 'Harina 000',
+              quantity: '4',
+              unit: 'un',
+              packageText: null,
+              unitPrice: null,
+              ivaRate: null,
+              discountPct: null,
+              lineTotal: null,
+            },
+          ],
+        }),
+      );
+      expect(await h.document(id)).toMatchObject({
+        review_status: 'unreviewed',
+        issues: [],
+      });
+    });
+
+    it('respects the $1.00 tolerance boundary on totals_mismatch and lines_mismatch', async () => {
+      await known(30);
+      const withinId = await extract(
+        invoiceOutput({
+          supplierCuit: KNOWN_CUIT,
+          number: '0003-00010001',
+          total: '50001.00',
+        }),
+      );
+      expect(await codes(withinId)).toEqual([]);
+
+      const overId = await extract(
+        invoiceOutput({
+          supplierCuit: KNOWN_CUIT,
+          number: '0003-00010002',
+          total: '50001.01',
+        }),
+      );
+      expect(await codes(overId)).toEqual(['totals_mismatch']);
+    });
+
+    it('passes when recipientCuit matches RESTAURANT_CUIT or is invalid, and fails when it differs', async () => {
+      await known(30);
+      const matchingId = await extract(
+        invoiceOutput({
+          supplierCuit: KNOWN_CUIT,
+          number: '0003-00020001',
+          recipientCuit: RESTAURANT_TEST_CUIT,
+        }),
+      );
+      expect(await codes(matchingId)).toEqual([]);
+
+      const wrongCheckDigit = `${NEW_CUIT.slice(0, 10)}${(Number(NEW_CUIT[10]) + 1) % 10}`;
+      const invalidId = await extract(
+        invoiceOutput({
+          supplierCuit: KNOWN_CUIT,
+          number: '0003-00020002',
+          recipientCuit: wrongCheckDigit,
+        }),
+      );
+      expect(await codes(invalidId)).toEqual([]);
+
+      const otherId = await extract(
+        invoiceOutput({
+          supplierCuit: KNOWN_CUIT,
+          number: '0003-00020003',
+          recipientCuit: NEW_CUIT,
+        }),
+      );
+      expect(await codes(otherId)).toEqual(['wrong_recipient']);
+    });
+  });
+
+  describe('duplicate_suspected', () => {
+    const unnumberedDeliveryNote = (
+      overrides: Partial<ExtractionOutput> = {},
+    ) =>
+      invoiceOutput({
+        supplierCuit: KNOWN_CUIT,
+        type: 'delivery_note',
+        letter: 'X',
+        number: null,
+        subtotal: null,
+        taxes: [],
+        lines: [],
+        total: '50000.00',
+        ...overrides,
+      });
+
+    it('flags a second unnumbered delivery note with same supplier, issue date, and total', async () => {
+      await known(30);
+      const firstId = await extract(unnumberedDeliveryNote());
+      expect(await h.document(firstId)).toMatchObject({
+        review_status: 'unreviewed',
+        issues: [],
+      });
+
+      const secondId = await extract(unnumberedDeliveryNote());
+      expect(await h.document(secondId)).toMatchObject({
+        review_status: 'error',
+        issues: [{ code: 'duplicate_suspected' }],
+      });
+    });
+
+    it('does not flag same supplier and total on a different issue_date', async () => {
+      await known(30);
+      await extract(unnumberedDeliveryNote({ issueDate: '2026-10-21' }));
+      const secondId = await extract(
+        unnumberedDeliveryNote({ issueDate: '2026-10-22' }),
+      );
+      expect(await codes(secondId)).toEqual([]);
+    });
+
+    it('does not flag two numbered documents with same supplier, date, and total but different numbers', async () => {
+      await known(30);
+      await extract(
+        invoiceOutput({ supplierCuit: KNOWN_CUIT, number: '0003-00030001' }),
+      );
+      const secondId = await extract(
+        invoiceOutput({ supplierCuit: KNOWN_CUIT, number: '0003-00030002' }),
+      );
+      expect(await codes(secondId)).toEqual([]);
+    });
+
+    it('flags numbered invoice followed by unnumbered delivery note with same supplier, date, and total', async () => {
+      await known(30);
+      await extract(
+        invoiceOutput({ supplierCuit: KNOWN_CUIT, number: '0003-00040001' }),
+      );
+      const secondId = await extract(unnumberedDeliveryNote());
+      expect(await codes(secondId)).toEqual(['duplicate_suspected']);
+    });
+
+    it('flags unnumbered delivery note followed by numbered invoice with same supplier, date, and total', async () => {
+      await known(30);
+      await extract(unnumberedDeliveryNote());
+      const secondId = await extract(
+        invoiceOutput({ supplierCuit: KNOWN_CUIT, number: '0003-00040002' }),
+      );
+      expect(await codes(secondId)).toEqual(['duplicate_suspected']);
+    });
+
+    it('ignores deleted documents, error documents, and opening balances', async () => {
+      const supplierId = await known(30);
+
+      // Deleted unnumbered delivery note
+      const deletedId = await extract(
+        unnumberedDeliveryNote({ issueDate: '2026-10-10' }),
+      );
+      await h.delete(`/api/documents/${deletedId}`).expect(204);
+      const afterDeleted = await extract(
+        unnumberedDeliveryNote({ issueDate: '2026-10-10' }),
+      );
+      expect(await codes(afterDeleted)).toEqual([]);
+
+      // Error document (wrong_recipient)
+      const errorId = await extract(
+        unnumberedDeliveryNote({
+          issueDate: '2026-10-11',
+          recipientCuit: NEW_CUIT,
+        }),
+      );
+      expect(await codes(errorId)).toEqual(['wrong_recipient']);
+      const afterError = await extract(
+        unnumberedDeliveryNote({ issueDate: '2026-10-11' }),
+      );
+      expect(await codes(afterError)).toEqual([]);
+
+      // Opening balance with same supplier, date, and total
+      await h
+        .post('/api/documents', {
+          supplierId,
+          type: 'opening_balance',
+          letter: null,
+          number: null,
+          issueDate: '2026-10-12',
+          dueDate: null,
+          total: '50000.00',
+          notes: null,
+        })
+        .expect(201);
+      const afterOpening = await extract(
+        unnumberedDeliveryNote({ issueDate: '2026-10-12' }),
+      );
+      expect(await codes(afterOpening)).toEqual([]);
+    });
+  });
 });

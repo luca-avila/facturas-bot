@@ -40,6 +40,7 @@ describe('mapExtraction', () => {
       issueDate: '2026-10-21',
       supplierCuit: CUIT,
       supplierName: output.supplierName,
+      recipientCuit: null,
       subtotal: '41322.31',
       total: '50000.00',
       cae: '76543210987654',
@@ -97,6 +98,15 @@ describe('mapExtraction', () => {
 
   it('reads a CUIT with letters around it as none', () => {
     expect(read({ supplierCuit: `CUIT ${CUIT}` }).supplierCuit).toBeNull();
+  });
+
+  it('normalizes a valid recipientCuit (with or without hyphens) and maps missing/invalid to null', () => {
+    const wrong = `${CUIT.slice(0, 10)}${(Number(CUIT[10]) + 1) % 10}`;
+    expect(read({ recipientCuit: CUIT }).recipientCuit).toBe(CUIT);
+    expect(read({ recipientCuit: dashed }).recipientCuit).toBe(CUIT);
+    expect(read({ recipientCuit: null }).recipientCuit).toBeNull();
+    expect(read({ recipientCuit: '   ' }).recipientCuit).toBeNull();
+    expect(read({ recipientCuit: wrong }).recipientCuit).toBeNull();
   });
 
   it.each(['0.00', '-50000.00', '50000.001', 'abc'])(

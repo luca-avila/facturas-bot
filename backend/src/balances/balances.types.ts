@@ -175,9 +175,11 @@ export interface ErrorDocumentRow {
   createdByName: string;
   /** The upload date in Buenos Aires. */
   createdOn: string;
-  /** Codes, in stored order. */
+  /** Open codes, in stored order. */
   issues: IssueCode[];
   suggestedTermDays: number | null;
+  /** Matching counted document id when `duplicate_suspected` is open. */
+  suspectedDuplicateId: string | null;
 }
 
 export interface ErrorDocumentList {

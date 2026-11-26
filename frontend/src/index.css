@@ -1033,3 +1033,40 @@ button.compact-btn,
   flex-direction: column;
   gap: 4px;
 }
+
+/* Acceptable issue cards and struck-through accepted issues */
+.issue-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.issue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.issue-card p {
+  margin: 0;
+}
+
+.accepted-issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.accepted-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+
+.accepted-issue s {
+  color: var(--text);
+}

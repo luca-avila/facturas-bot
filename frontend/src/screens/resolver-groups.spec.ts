@@ -22,6 +22,7 @@ function row(
     createdOn: '2026-11-01',
     issues: overrides.issues ?? ['supplier_term_missing'],
     suggestedTermDays: overrides.suggestedTermDays ?? null,
+    suspectedDuplicateId: null,
   }
 }
 

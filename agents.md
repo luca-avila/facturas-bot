@@ -47,7 +47,7 @@ Orientation for coding agents working in this repo.
 - **Each spec file that gives suppliers a CUIT has its own group in `backend/test/test-cuits.ts`**, and frees only that group before each test. `RESTAURANT_TEST_CUIT` is never a supplier's.
 - **Worker specs call `runOnce({ documentIds })` with their own documents.** The shared test database holds every spec file's queued uploads.
 - **Backend tests never reach the network**: `test/no-network.ts` replaces `fetch`, and worker specs pass a `FakeLlm` through `LLM_FETCH`.
-- **The worker's write locks the job, then the document, then the supplier.** A new writer that locks a supplier and then its documents must not lock a `processing` one.
+- **The worker's write locks the job, then the document, then the supplier.** A new writer that locks a supplier and then its documents must not lock a `processing` one. Every transaction that can introduce or promote a counted document's `(supplier_id, issue_date, total, number_normalized)` (`ExtractionWriter.writeIn`, `DocumentsService.createManual`, `DocumentsService.update`, `DocumentsService.acceptIssue`, and `SuppliersService.setTerm`) acquires `ADVISORY_LOCKS.documentDuplicates` as its very first statement, before taking any row locks.
 - **`AuditService.recordByWorker` is for `src/extraction/` only.** Every other entry has a user (D2).
 - **Starting the worker sends every queued upload in that database to Anthropic.** Delete the uploads you don't want sent first: a deleted document's job ends without a call.
 - **Tests that read `GET /api/suppliers` search for a unique token** in their suppliers' names, such as `` `Panadería ${randomUUID()}` ``. The list holds every other spec file's suppliers too.

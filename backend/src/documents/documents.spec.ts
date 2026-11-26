@@ -722,6 +722,13 @@ describe('documents', () => {
         cae: null,
         notes: 'Pedido de octubre',
         issues: [],
+        acceptedIssues: [],
+        suspectedDuplicate: null,
+        consistencySummary: {
+          taxSum: null,
+          subtotalPlusTaxes: null,
+          lineTotalSum: null,
+        },
         lines: [],
         taxes: [],
       });
@@ -857,6 +864,67 @@ describe('documents', () => {
           amount: '0.00',
         },
       ]);
+      expect(body.consistencySummary).toEqual({
+        taxSum: '8688.19',
+        subtotalPlusTaxes: '50010.50',
+        lineTotalSum: '24818.40',
+      });
+    });
+
+    it('separates open issues from acceptedIssues with user name and Buenos Aires time, and resolves suspectedDuplicate', async () => {
+      const supplierId = await newSupplier(30);
+      const existingId = await enter(
+        invoice(supplierId, {
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          issueDate: '2026-10-15',
+          total: '12345.67',
+        }),
+      );
+      const { id } = await prisma.document.create({
+        data: {
+          source: 'upload',
+          reviewStatus: 'error',
+          type: 'delivery_note',
+          supplierId,
+          letter: 'X',
+          number: null,
+          numberNormalized: null,
+          issueDate: new Date('2026-10-15T00:00:00Z'),
+          total: '12345.67',
+          issues: [
+            { code: 'duplicate_suspected' },
+            {
+              code: 'wrong_recipient',
+              acceptedBy: ana.id,
+              acceptedAt: '2026-11-10T02:15:00.000Z',
+            },
+          ],
+          createdById: ana.id,
+        },
+      });
+
+      const res = await read(id).expect(200);
+      expect(res.body).toMatchObject({
+        issues: ['duplicate_suspected'],
+        acceptedIssues: [
+          {
+            code: 'wrong_recipient',
+            acceptedByName: 'Ana',
+            acceptedOn: '2026-11-09',
+            acceptedTime: '23:15',
+          },
+        ],
+        suspectedDuplicate: {
+          id: existingId,
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          issueDate: '2026-10-15',
+          total: '12345.67',
+        },
+      });
     });
 
     it.each([
@@ -1653,6 +1721,7 @@ describe('documents', () => {
             subtotal: '200.00',
             total: '221.00',
             notes: 'editado',
+            acceptIssues: ['lines_mismatch'],
           }),
         ).expect(204);
 
@@ -1809,6 +1878,759 @@ describe('documents', () => {
         expect(res.body).toEqual({
           errors: [{ field: 'document', code: 'not_editable' }],
         });
+      });
+    });
+
+    describe('POST /api/documents/:id/issues/:code/accept', () => {
+      const accept = (id: string, code: string) =>
+        withSession(http().post(`/api/documents/${id}/issues/${code}/accept`))
+          .send({});
+
+      it.each([
+        'extraction_failed',
+        'unsupported_document',
+        'supplier_unresolved',
+        'missing_total',
+        'missing_issue_date',
+        'supplier_term_missing',
+        'duplicate_number',
+      ])(
+        'refuses blocking code %s with 400 issue_not_acceptable and leaves document untouched',
+        async (blockingCode) => {
+          const supplierId = await newSupplier(30);
+          const id = await createDoc({
+            reviewStatus: 'error',
+            type: 'invoice',
+            supplierId,
+            issueDate: new Date('2026-10-09'),
+            dueDate: new Date('2026-11-08'),
+            dueDateSource: 'supplier_term',
+            total: '1000.00',
+            issues: [{ code: blockingCode }],
+          });
+          const res = await accept(id, blockingCode).expect(400);
+          expect(res.body).toEqual({
+            errors: [{ field: 'code', code: 'issue_not_acceptable' }],
+          });
+          const stored = await prisma.document.findUniqueOrThrow({
+            where: { id },
+          });
+          expect(stored.reviewStatus).toBe('error');
+          expect(stored.issues).toEqual([{ code: blockingCode }]);
+          expect(
+            await prisma.auditLog.count({ where: { entityId: id } }),
+          ).toBe(0);
+        },
+      );
+
+      it('refuses unknown code with 400, non-UUID/unknown/deleted doc with 404, and non-error or missing issue with 409', async () => {
+        const supplierId = await newSupplier(30);
+        const errorId = await createDoc({
+          reviewStatus: 'error',
+          type: 'invoice',
+          supplierId,
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          total: '1000.00',
+          issues: [{ code: 'totals_mismatch' }],
+        });
+        await accept(errorId, 'not_a_real_code').expect(400);
+        await accept('not-a-uuid', 'totals_mismatch').expect(404);
+        await accept(randomUUID(), 'totals_mismatch').expect(404);
+
+        const missingRes = await accept(errorId, 'wrong_recipient').expect(409);
+        expect(missingRes.body).toEqual({
+          errors: [{ field: 'document', code: 'not_editable' }],
+        });
+
+        const unreviewedId = await createDoc({
+          reviewStatus: 'unreviewed',
+          type: 'invoice',
+          supplierId,
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          total: '1000.00',
+          issues: [],
+        });
+        const stateRes = await accept(unreviewedId, 'totals_mismatch').expect(
+          409,
+        );
+        expect(stateRes.body).toEqual({
+          errors: [{ field: 'document', code: 'not_editable' }],
+        });
+
+        await remove(errorId).expect(204);
+        await accept(errorId, 'totals_mismatch').expect(404);
+      });
+
+      it('accepts one of two issues keeping error, hides it from open issues, is idempotent, and promotes on the last issue', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({
+          reviewStatus: 'error',
+          type: 'invoice',
+          supplierId,
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          subtotal: '800.00',
+          total: '1000.00',
+          issues: [{ code: 'totals_mismatch' }, { code: 'wrong_recipient' }],
+        });
+
+        // Accept first of two
+        await accept(id, 'totals_mismatch').expect(204);
+        const afterFirst = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(afterFirst.reviewStatus).toBe('error');
+        expect(afterFirst.reviewedById).toBeNull();
+        expect(afterFirst.issues).toEqual([
+          {
+            code: 'totals_mismatch',
+            acceptedBy: ana.id,
+            acceptedAt: NOW,
+          },
+          { code: 'wrong_recipient' },
+        ]);
+
+        // Detail exposes open issues only + acceptedIssues with user name & Buenos Aires timestamp
+        const detail1 = (
+          await withSession(http().get(`/api/documents/${id}`)).expect(200)
+        ).body as Record<string, unknown>;
+        expect(detail1).toMatchObject({
+          reviewStatus: 'error',
+          issues: ['wrong_recipient'],
+          acceptedIssues: [
+            {
+              code: 'totals_mismatch',
+              acceptedByName: 'Ana',
+              acceptedOn: '2026-11-09',
+              acceptedTime: '12:00',
+            },
+          ],
+        });
+
+        // Error list hides accepted code
+        const errList = await withSession(http().get('/api/error-documents'))
+          .expect(200);
+        const errRow = (
+          errList.body as {
+            documents: { id: string; issues: string[] }[];
+          }
+        ).documents.find((d) => d.id === id);
+        expect(errRow?.issues).toEqual(['wrong_recipient']);
+
+        // Idempotent second accept on already-accepted issue writes no second audit entry
+        await accept(id, 'totals_mismatch').expect(204);
+        expect(
+          await prisma.auditLog.count({
+            where: { entity: 'documents', entityId: id, action: 'update' },
+          }),
+        ).toBe(1);
+
+        // Supplier account doesn't count it yet
+        const accountBefore = (
+          await withSession(http().get(`/api/suppliers/${supplierId}`)).expect(
+            200,
+          )
+        ).body as { balance: string };
+        expect(accountBefore.balance).toBe('0.00');
+
+        // Accept last open issue -> promotes to reviewed and counts in supplier balance
+        await accept(id, 'wrong_recipient').expect(204);
+        const afterLast = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(afterLast.reviewStatus).toBe('reviewed');
+        expect(afterLast.reviewedById).toBe(ana.id);
+        expect(afterLast.reviewedAt?.toISOString()).toBe(NOW);
+
+        const accountAfter = (
+          await withSession(http().get(`/api/suppliers/${supplierId}`)).expect(
+            200,
+          )
+        ).body as { balance: string };
+        expect(accountAfter.balance).toBe('1000.00');
+        expect(
+          await prisma.auditLog.count({
+            where: { entity: 'documents', entityId: id, action: 'update' },
+          }),
+        ).toBe(2);
+      });
+
+      it('adds duplicate_number and stays in error if a concurrent duplicate number arrived before accepting the last issue', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({
+          reviewStatus: 'error',
+          type: 'invoice',
+          supplierId,
+          letter: 'A',
+          number: '0009-00000101',
+          numberNormalized: '000900000101',
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          total: '1000.00',
+          issues: [{ code: 'wrong_recipient' }],
+        });
+        // Another document with the same number lands in reviewed first
+        await enter(
+          invoice(supplierId, {
+            letter: 'A',
+            number: '0009-00000101',
+            issueDate: '2026-10-09',
+            total: '2000.00',
+          }),
+        );
+
+        await accept(id, 'wrong_recipient').expect(204);
+        const stored = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(stored.reviewStatus).toBe('error');
+        expect(stored.reviewedById).toBeNull();
+        expect(stored.issues).toEqual([
+          { code: 'duplicate_number' },
+          {
+            code: 'wrong_recipient',
+            acceptedBy: ana.id,
+            acceptedAt: NOW,
+          },
+        ]);
+      });
+
+      it('adds duplicate_suspected and stays in error if a concurrent unnumbered duplicate arrived before accepting the last issue', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({
+          reviewStatus: 'error',
+          type: 'delivery_note',
+          supplierId,
+          letter: 'X',
+          number: null,
+          numberNormalized: null,
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          total: '1000.00',
+          issues: [{ code: 'wrong_recipient' }],
+        });
+        // Concurrent matching unnumbered document arrives
+        await enter(
+          invoice(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-09',
+            total: '1000.00',
+          }),
+        );
+
+        await accept(id, 'wrong_recipient').expect(204);
+        const stored = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(stored.reviewStatus).toBe('error');
+        expect(stored.issues).toEqual([
+          { code: 'duplicate_suspected' },
+          {
+            code: 'wrong_recipient',
+            acceptedBy: ana.id,
+            acceptedAt: NOW,
+          },
+        ]);
+      });
+    });
+
+    describe('manual entry duplicate_suspected and concurrency', () => {
+      it('rejects a suspected duplicate with 409 including documentId, and saves as reviewed with accepted issue when allowSuspectedDuplicate is true', async () => {
+        const supplierId = await newSupplier(30);
+        const firstId = await enter(
+          invoice(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-15',
+            total: '15000.00',
+          }),
+        );
+
+        const dupPayload = invoice(supplierId, {
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          issueDate: '2026-10-15',
+          total: '15000.00',
+        });
+        const conflictRes = await post(dupPayload).expect(409);
+        expect(conflictRes.body).toEqual({
+          errors: [
+            {
+              field: 'document',
+              code: 'duplicate_suspected',
+              documentId: firstId,
+            },
+          ],
+        });
+        expect(
+          await prisma.document.count({ where: { supplierId } }),
+        ).toBe(1);
+
+        // Resend with allowSuspectedDuplicate: true
+        const createdRes = await post({
+          ...dupPayload,
+          allowSuspectedDuplicate: true,
+        }).expect(201);
+        const secondId = (createdRes.body as { id: string }).id;
+        const stored = await prisma.document.findUniqueOrThrow({
+          where: { id: secondId },
+        });
+        expect(stored.reviewStatus).toBe('reviewed');
+        expect(stored.issues).toEqual([
+          {
+            code: 'duplicate_suspected',
+            acceptedBy: ana.id,
+            acceptedAt: NOW,
+          },
+        ]);
+        expect(
+          await prisma.auditLog.count({
+            where: {
+              entity: 'documents',
+              entityId: secondId,
+              action: 'create',
+              userId: ana.id,
+            },
+          }),
+        ).toBe(1);
+      });
+
+      it('checks duplicate_number before duplicate_suspected on manual entry', async () => {
+        const supplierId = await newSupplier(30);
+        await enter(
+          invoice(supplierId, {
+            number: '0003-00005555',
+            issueDate: '2026-10-15',
+            total: '15000.00',
+          }),
+        );
+        const res = await post({
+          ...invoice(supplierId, {
+            number: '0003-00005555',
+            issueDate: '2026-10-15',
+            total: '15000.00',
+          }),
+          allowSuspectedDuplicate: true,
+        }).expect(409);
+        expect(res.body).toEqual({
+          errors: [{ field: 'number', code: 'duplicate_number' }],
+        });
+      });
+
+      it('allows two numbered documents with different numbers, different day, and opening_balance without warning', async () => {
+        const supplierId = await newSupplier(30);
+        await enter(
+          invoice(supplierId, {
+            number: '0003-00006001',
+            issueDate: '2026-10-15',
+            total: '15000.00',
+          }),
+        );
+        // Different number, same date & total
+        await post(
+          invoice(supplierId, {
+            number: '0003-00006002',
+            issueDate: '2026-10-15',
+            total: '15000.00',
+          }),
+        ).expect(201);
+        // Unnumbered on different day
+        await post(
+          invoice(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-16',
+            total: '15000.00',
+          }),
+        ).expect(201);
+        // Opening balance on same date & total
+        await post({
+          supplierId,
+          type: 'opening_balance',
+          letter: null,
+          number: null,
+          issueDate: '2026-10-15',
+          dueDate: null,
+          total: '15000.00',
+          notes: null,
+        }).expect(201);
+        // Same date & total for a different supplier
+        const otherSupplierId = await newSupplier(30);
+        await post(
+          invoice(otherSupplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-15',
+            total: '15000.00',
+          }),
+        ).expect(201);
+        // Different total on same supplier & date
+        await post(
+          invoice(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-15',
+            total: '15001.00',
+          }),
+        ).expect(201);
+      });
+
+      it('prevents concurrent unnumbered manual duplicates via advisory lock (exactly one 201 and one 409)', async () => {
+        const supplierId = await newSupplier(30);
+        const payload = invoice(supplierId, {
+          type: 'delivery_note',
+          letter: 'X',
+          number: null,
+          issueDate: '2026-10-18',
+          total: '22222.00',
+        });
+
+        const [r1, r2] = await Promise.all([post(payload), post(payload)]);
+        const statuses = [r1.status, r2.status].sort((a, b) => a - b);
+        expect(statuses).toEqual([201, 409]);
+
+        const winner = r1.status === 201 ? r1 : r2;
+        const loser = r1.status === 409 ? r1 : r2;
+        expect(loser.body).toEqual({
+          errors: [
+            {
+              field: 'document',
+              code: 'duplicate_suspected',
+              documentId: (winner.body as { id: string }).id,
+            },
+          ],
+        });
+        expect(
+          await prisma.document.count({ where: { supplierId } }),
+        ).toBe(1);
+      });
+    });
+
+    describe('PUT /api/documents/:id acceptable re-checks and acceptance', () => {
+      it('rejects editing an unreviewed document subtotal by $5 with 409 totals_mismatch (never returns to error), passes at $0.50, and accepts with acceptIssues', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await createDoc({
+          reviewStatus: 'unreviewed',
+          type: 'invoice',
+          supplierId,
+          letter: 'A',
+          number: '0003-00007001',
+          numberNormalized: '000300007001',
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          subtotal: '1000.00',
+          total: '1210.00',
+          issues: [],
+          taxes: {
+            create: [{ kind: 'iva', label: 'IVA 21%', amount: '210.00' }],
+          },
+        });
+
+        // Change subtotal by $5.00 -> 409 totals_mismatch, document unchanged
+        const rejectRes = await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007001',
+            subtotal: '1005.00',
+            total: '1210.00',
+          }),
+        ).expect(409);
+        expect(rejectRes.body).toEqual({
+          errors: [{ field: 'document', code: 'totals_mismatch' }],
+        });
+        const unchanged = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(unchanged.reviewStatus).toBe('unreviewed');
+        expect(unchanged.subtotal?.toString()).toBe('1000');
+
+        // Change subtotal by $0.50 -> passes immediately within $1.00 tolerance
+        await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007001',
+            subtotal: '1000.50',
+            total: '1210.00',
+          }),
+        ).expect(204);
+        const within = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(within.reviewStatus).toBe('reviewed');
+        expect(within.issues).toEqual([]);
+
+        // Change subtotal by $5.00 with acceptIssues -> 204 reviewed with acceptance recorded
+        await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007001',
+            subtotal: '1005.00',
+            total: '1210.00',
+            acceptIssues: ['totals_mismatch'],
+          }),
+        ).expect(204);
+        const accepted = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(accepted.reviewStatus).toBe('reviewed');
+        expect(accepted.issues).toEqual([
+          {
+            code: 'totals_mismatch',
+            acceptedBy: ana.id,
+            acceptedAt: NOW,
+          },
+        ]);
+      });
+
+      it('requires re-acceptance when editing a reviewed document that previously accepted wrong_recipient or totals_mismatch', async () => {
+        const supplierId = await newSupplier(30);
+        const earlier = '2026-11-01T10:00:00.000Z';
+        const id = await createDoc({
+          reviewStatus: 'reviewed',
+          type: 'invoice',
+          supplierId,
+          letter: 'A',
+          number: '0003-00007002',
+          numberNormalized: '000300007002',
+          issueDate: new Date('2026-10-09'),
+          dueDate: new Date('2026-11-08'),
+          dueDateSource: 'supplier_term',
+          subtotal: '1005.00',
+          total: '1210.00',
+          reviewedById: ana.id,
+          reviewedAt: new Date(earlier),
+          issues: [
+            {
+              code: 'totals_mismatch',
+              acceptedBy: ana.id,
+              acceptedAt: earlier,
+            },
+            {
+              code: 'wrong_recipient',
+              acceptedBy: ana.id,
+              acceptedAt: earlier,
+            },
+          ],
+          taxes: {
+            create: [{ kind: 'iva', label: 'IVA 21%', amount: '210.00' }],
+          },
+        });
+
+        // Editing notes without acceptIssues -> 409 naming BOTH still-triggering codes
+        const res = await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007002',
+            subtotal: '1005.00',
+            total: '1210.00',
+            notes: 'Editada',
+          }),
+        ).expect(409);
+        expect(res.body).toEqual({
+          errors: [
+            { field: 'document', code: 'totals_mismatch' },
+            { field: 'document', code: 'wrong_recipient' },
+          ],
+        });
+
+        // Re-sending with both accepted updates acceptedAt
+        await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007002',
+            subtotal: '1005.00',
+            total: '1210.00',
+            notes: 'Editada',
+            acceptIssues: ['totals_mismatch', 'wrong_recipient'],
+          }),
+        ).expect(204);
+        const updated = await prisma.document.findUniqueOrThrow({
+          where: { id },
+        });
+        expect(updated.notes).toBe('Editada');
+        expect(updated.issues).toEqual([
+          { code: 'totals_mismatch', acceptedBy: ana.id, acceptedAt: NOW },
+          { code: 'wrong_recipient', acceptedBy: ana.id, acceptedAt: NOW },
+        ]);
+      });
+
+      it('saves header edits on an error document and keeps it in error when acceptable issues trigger without acceptIssues, and resets previously accepted wrong_recipient to open', async () => {
+        const supplierId = await newSupplier(30);
+        const earlier = '2026-11-01T10:00:00.000Z';
+        const id = await createDoc({
+          reviewStatus: 'error',
+          type: 'invoice',
+          supplierId: null,
+          letter: 'A',
+          number: '0003-00007003',
+          numberNormalized: '000300007003',
+          issueDate: new Date('2026-10-09'),
+          subtotal: '1005.00',
+          total: '1210.00',
+          issues: [
+            { code: 'supplier_unresolved' },
+            {
+              code: 'wrong_recipient',
+              acceptedBy: ana.id,
+              acceptedAt: earlier,
+            },
+          ],
+          taxes: {
+            create: [{ kind: 'iva', label: 'IVA 21%', amount: '210.00' }],
+          },
+        });
+
+        await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007003',
+            subtotal: '1005.00',
+            total: '1210.00',
+            notes: 'Proveedor asignado',
+          }),
+        ).expect(204);
+
+        const saved = await prisma.document.findUniqueOrThrow({ where: { id } });
+        expect(saved.supplierId).toBe(supplierId);
+        expect(saved.notes).toBe('Proveedor asignado');
+        expect(saved.reviewStatus).toBe('error');
+        expect(saved.reviewedById).toBeNull();
+        expect(saved.reviewedAt).toBeNull();
+        expect(saved.issues).toEqual([
+          { code: 'totals_mismatch' },
+          { code: 'wrong_recipient' },
+        ]);
+        expect(
+          await prisma.auditLog.count({
+            where: {
+              entity: 'documents',
+              entityId: id,
+              action: 'update',
+              userId: ana.id,
+            },
+          }),
+        ).toBe(1);
+      });
+
+      it('rejects blocking or unknown codes in acceptIssues with 400', async () => {
+        const supplierId = await newSupplier(30);
+        const id = await enter(
+          invoice(supplierId, { number: '0003-00007004' }),
+        );
+        const blockingRes = await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007004',
+            acceptIssues: ['duplicate_number'],
+          }),
+        ).expect(400);
+        expect(blockingRes.body).toEqual({
+          errors: [{ field: 'acceptIssues', code: 'issue_not_acceptable' }],
+        });
+
+        await put(
+          id,
+          editPayload(supplierId, {
+            number: '0003-00007004',
+            acceptIssues: ['unknown_code'],
+          }),
+        ).expect(400);
+      });
+
+      it('rejects editing a reviewed document to match an unnumbered duplicate with 409 duplicate_suspected including documentId, and succeeds with acceptIssues', async () => {
+        const supplierId = await newSupplier(30);
+        const existingId = await enter(
+          invoice(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-20',
+            total: '3300.00',
+          }),
+        );
+        const editedId = await enter(
+          invoice(supplierId, {
+            number: '0003-00007005',
+            issueDate: '2026-10-20',
+            total: '9999.00',
+          }),
+        );
+
+        const conflictRes = await put(
+          editedId,
+          editPayload(supplierId, {
+            number: '0003-00007005',
+            issueDate: '2026-10-20',
+            total: '3300.00',
+          }),
+        ).expect(409);
+        expect(conflictRes.body).toEqual({
+          errors: [
+            {
+              field: 'document',
+              code: 'duplicate_suspected',
+              documentId: existingId,
+            },
+          ],
+        });
+
+        await put(
+          editedId,
+          editPayload(supplierId, {
+            number: '0003-00007005',
+            issueDate: '2026-10-20',
+            total: '3300.00',
+            acceptIssues: ['duplicate_suspected'],
+          }),
+        ).expect(204);
+        const saved = await prisma.document.findUniqueOrThrow({
+          where: { id: editedId },
+        });
+        expect(saved.reviewStatus).toBe('reviewed');
+        expect(saved.issues).toEqual([
+          {
+            code: 'duplicate_suspected',
+            acceptedBy: ana.id,
+            acceptedAt: NOW,
+          },
+        ]);
+
+        // Editing an unnumbered document itself (e.g. its notes) does not self-match duplicate_suspected
+        const soloId = await enter(
+          invoice(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-25',
+            total: '4400.00',
+          }),
+        );
+        await put(
+          soloId,
+          editPayload(supplierId, {
+            type: 'delivery_note',
+            letter: 'X',
+            number: null,
+            issueDate: '2026-10-25',
+            total: '4400.00',
+            notes: 'Solo notas',
+          }),
+        ).expect(204);
       });
     });
   });

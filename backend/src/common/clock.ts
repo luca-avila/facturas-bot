@@ -13,6 +13,16 @@ const dateFormat = new Intl.DateTimeFormat('en-US', {
   day: '2-digit',
 });
 
+const timestampFormat = new Intl.DateTimeFormat('en-US', {
+  timeZone: BUSINESS_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
 /** The current instant. Everything that stores or compares a timestamp reads it here. */
 export function now(): Date {
   return new Date();
@@ -27,4 +37,21 @@ export function today(): string {
     return value;
   };
   return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+/** Formats an ISO timestamp as Buenos Aires `YYYY-MM-DD` and `HH:MM`. */
+export function formatBuenosAiresTimestamp(iso: string): {
+  date: string;
+  time: string;
+} {
+  const parts = timestampFormat.formatToParts(new Date(iso));
+  const part = (type: Intl.DateTimeFormatPartTypes): string => {
+    const value = parts.find((p) => p.type === type)?.value;
+    if (!value) throw new Error(`Missing ${type} in formatted timestamp`);
+    return value;
+  };
+  return {
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    time: `${part('hour')}:${part('minute')}`,
+  };
 }

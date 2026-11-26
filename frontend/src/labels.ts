@@ -2,6 +2,7 @@
 // so a missing label doesn't compile.
 
 import type {
+  AcceptableIssueCode,
   DocumentSource,
   DocumentStatus,
   DocumentType,
@@ -86,6 +87,11 @@ export const FIELD_ERROR_MESSAGES: Record<FieldErrorCode, string> = {
   subtotal_invalid: 'Ingresá un subtotal válido (mayor o igual a cero), o dejalo vacío.',
   total_invalid: 'Ingresá un total mayor a cero, como 86.900,50.',
   duplicate_number: 'Ya existe un documento de este proveedor con el mismo tipo, letra y número.',
+  duplicate_suspected: 'Posible duplicado: ya existe otro documento de este proveedor con la misma fecha y el mismo total.',
+  totals_mismatch: 'El subtotal más los impuestos no coincide con el total.',
+  lines_mismatch: 'La suma de los ítems no coincide con el subtotal ni con el total.',
+  wrong_recipient: 'El CUIT del destinatario no es el del restaurante.',
+  issue_not_acceptable: 'Este error no se puede aceptar: hay que corregirlo o descartar el documento.',
   not_editable: 'Este documento no se puede editar en este estado.',
   amount_invalid: 'Ingresá un monto mayor a cero, como 120.000,00.',
   paid_on_invalid: 'Ingresá una fecha de pago válida.',
@@ -113,6 +119,18 @@ export const ISSUE_MESSAGES: Record<IssueCode, string> = {
   missing_issue_date: 'Falta la fecha de emisión.',
   supplier_term_missing: 'El proveedor no tiene plazo de pago, así que no se puede calcular el vencimiento.',
   duplicate_number: 'Ya existe un documento de este proveedor con el mismo tipo, letra y número.',
+  duplicate_suspected: 'Posible duplicado: ya existe otro documento de este proveedor con la misma fecha y el mismo total.',
+  totals_mismatch: 'El subtotal más los impuestos no coincide con el total.',
+  lines_mismatch: 'La suma de los ítems no coincide con el subtotal ni con el total.',
+  wrong_recipient: 'El CUIT del destinatario no es el del restaurante.',
+}
+
+/** Button label for explicitly accepting an acceptable issue. */
+export const ACCEPT_ISSUE_LABELS: Record<AcceptableIssueCode, string> = {
+  duplicate_suspected: 'Aceptar igual',
+  totals_mismatch: 'Aceptar como está',
+  lines_mismatch: 'Aceptar como está',
+  wrong_recipient: 'Aceptar CUIT',
 }
 
 export const UPLOAD_SCOPE_LABELS: Record<UploadScope, string> = {
