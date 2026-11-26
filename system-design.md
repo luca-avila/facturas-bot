@@ -383,13 +383,13 @@ Where the wireframes differ from this file on purpose:
 
 - **Containers:** nginx, backend, worker and Postgres on one VPS, with Docker Compose.
 - **Storage:** about 1,400 images a year at around 1 MB each, so disk isn't a concern.
-- **Backups:** nightly `pg_dump` and a copy of `UPLOAD_DIR` to storage outside the VPS, with a tested restore. Today both would live on the same machine.
+- **Backups:** deferred out of the MVP by user decision (see [`plans/mvp-slices.md`](plans/mvp-slices.md#open-questions) question 16). Until a follow-up backup slice adds nightly `pg_dump` and `UPLOAD_DIR` copies to off-VPS storage with a tested restore, Postgres and uploaded photos live only in persistent Docker volumes on the VPS.
 - **Accounts:** a script on the server creates users, resets passwords and disables users. Users are disabled, never deleted, because documents, payments and `audit_log` point to them.
 - **Sessions:** long-lived, in an `httpOnly` cookie, and login is rate limited. A session expires after 30 days without use, and each request renews it. Every request checks that the user isn't disabled and that the session was issued after `password_set_at`, so disabling someone or resetting their password signs them out everywhere.
 
 ## Out of scope
 
-Multi-tenancy (postponed on purpose, see [`one-way-doors.md`](one-way-doors.md#postponed-on-purpose)), other restaurants, permissions by role, sign-up, password reset by email, spreadsheet import, WhatsApp, linking delivery notes to invoices, due-date reminders, QR cross-checks and currencies other than ARS.
+Multi-tenancy (postponed on purpose, see [`one-way-doors.md`](one-way-doors.md#postponed-on-purpose)), other restaurants, permissions by role, sign-up, password reset by email, spreadsheet import, WhatsApp, linking delivery notes to invoices, due-date reminders, QR cross-checks, currencies other than ARS, and automated off-VPS backups/restore (deferred out of the MVP for a dedicated follow-up slice).
 
 ## Open questions
 
