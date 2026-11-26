@@ -1,18 +1,49 @@
-import { useEffect, useState } from 'react'
-import { Link, useLocation, useParams } from 'react-router'
-import { getDocument, imageUrl, type ApiResult, type DocumentDetail, type DocumentLine } from '../accounts-api'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
+import {
+  deleteDocument,
+  getDocument,
+  imageUrl,
+  listSuppliers,
+  retryDocument,
+  reviewDocument,
+  updateDocument,
+  type ApiResult,
+  type DocumentDetail,
+  type DocumentLine,
+  type DocumentType,
+  type SupplierList,
+  type TermPreview,
+} from '../accounts-api'
 import { documentTitle, formatDate, formatDecimal, formatMoney } from '../format'
-import { DOCUMENT_TYPE_LABELS, DUE_DATE_SOURCE_LABELS, ISSUE_MESSAGES, REVIEW_STATUS_LABELS } from '../labels'
+import { DOCUMENT_TYPE_LABELS, ISSUE_MESSAGES, REVIEW_STATUS_LABELS } from '../labels'
+import {
+  allowedTypesForSource,
+  buildUpdatePayload,
+  initialEditValues,
+  isAppliedLocked,
+  isEditDirty,
+  type DocumentEditValues,
+} from './document-edit'
+import Field from './Field'
+import { failedSave, localError, type FieldMessages } from './form-errors'
+import TermSheet from './TermSheet'
 
 /** How long after each response a `processing` document is checked again. */
 const POLL_MS = 3000
 
 const NBSP = ' '
 const MISSING = '—'
+const LETTERS = ['A', 'B', 'C', 'M', 'X']
 
 interface Loaded {
   key: string
   result: ApiResult<DocumentDetail>
+}
+
+interface EditState {
+  docId: string
+  values: DocumentEditValues
 }
 
 type Tab = 'datos' | 'foto'
@@ -22,21 +53,59 @@ function heading(doc: DocumentDetail): string | null {
   return doc.reviewStatus === 'processing' ? null : 'Documento sin datos'
 }
 
-function routeState(state: unknown): { alreadyUploaded: boolean; fromResolver: boolean } {
+function routeState(state: unknown): { alreadyUploaded: boolean; fromResolver: boolean; manualEntry: boolean } {
   const record = typeof state === 'object' && state !== null ? (state as Record<string, unknown>) : {}
-  return { alreadyUploaded: record.alreadyUploaded === true, fromResolver: record.from === 'a-resolver' }
+  return {
+    alreadyUploaded: record.alreadyUploaded === true,
+    fromResolver: record.from === 'a-resolver',
+    manualEntry: record.manualEntry === true,
+  }
 }
 
-/** *Documento* (5a–5d, 5g, 4f): one document, its data and its pages. */
+function isPureExtractionFailure(doc: DocumentDetail): boolean {
+  return (
+    doc.reviewStatus === 'error' &&
+    doc.source === 'upload' &&
+    doc.issues.includes('extraction_failed') &&
+    doc.type === null &&
+    doc.supplier === null &&
+    doc.issueDate === null &&
+    doc.total === null &&
+    doc.lines.length === 0 &&
+    doc.taxes.length === 0
+  )
+}
+
+/** *Documento* (5a–5g, 4f): one document, its photos, and editable header. */
 function Documento() {
   const { id = '' } = useParams()
   const location = useLocation()
-  const { alreadyUploaded, fromResolver } = routeState(location.state)
+  const navigate = useNavigate()
+  const { alreadyUploaded, fromResolver, manualEntry } = routeState(location.state)
   const [attempt, setAttempt] = useState(0)
   const [check, setCheck] = useState(0)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
+  const [suppliers, setSuppliers] = useState<ApiResult<SupplierList> | null>(null)
   const [tab, setTab] = useState<Tab>('datos')
+  const [editState, setEditState] = useState<EditState | null>(null)
+  const [manualMode, setManualMode] = useState(manualEntry)
+  const [saving, setSaving] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [termSheetOpen, setTermSheetOpen] = useState(false)
+  const [fieldMessages, setFieldMessages] = useState<FieldMessages>({})
+  const [formMessage, setFormMessage] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const key = `${id}\n${attempt}`
+
+  useEffect(() => {
+    let current = true
+    void listSuppliers({ q: '', sort: 'name' }).then((result) => {
+      if (current) setSuppliers(result)
+    })
+    return () => {
+      current = false
+    }
+  }, [])
 
   useEffect(() => {
     let current = true
@@ -48,6 +117,9 @@ function Documento() {
         if (!result.ok && prev?.key === key && prev.result.ok) return { ...prev }
         return { key, result }
       })
+      if (result.ok) {
+        setEditState({ docId: result.value.id, values: initialEditValues(result.value) })
+      }
     })
     return () => {
       current = false
@@ -102,21 +174,88 @@ function Documento() {
   }
 
   const doc = result.value
+  const values = editState?.docId === doc.id ? editState.values : initialEditValues(doc)
   const title = heading(doc)
   const count = doc.images.length
   const by = doc.source === 'upload' ? 'Subido por' : 'Cargado por'
   const tabbed = count > 0 && !processing
+  const showExtractionFailedCard = isPureExtractionFailure(doc) && !manualMode
+
+  const refreshDoc = () => setAttempt((n) => n + 1)
+
+  async function handleRetry() {
+    setSaving(true)
+    setFormMessage(null)
+    const res = await retryDocument(doc.id)
+    setSaving(false)
+    if (res.ok) {
+      setNotice('Reintentando lectura…')
+      refreshDoc()
+      return
+    }
+    const failure = failedSave(res)
+    setFieldMessages(failure.fields)
+    setFormMessage(failure.form ?? Object.values(failure.fields)[0] ?? 'No pudimos reintentar.')
+  }
+
+  async function handleDiscard() {
+    setSaving(true)
+    setFormMessage(null)
+    const res = await deleteDocument(doc.id)
+    setSaving(false)
+    if (res.ok) {
+      navigate(fromResolver ? '/a-resolver' : '/subidas')
+      return
+    }
+    setConfirmDiscard(false)
+    const failure = failedSave(res)
+    setFieldMessages(failure.fields)
+    setFormMessage(failure.form ?? Object.values(failure.fields)[0] ?? 'No pudimos descartar el documento.')
+  }
+
+  async function handleReview() {
+    setSaving(true)
+    setFormMessage(null)
+    const res = await reviewDocument(doc.id)
+    setSaving(false)
+    if (res.ok) {
+      setNotice('Marcado como revisado.')
+      refreshDoc()
+      return
+    }
+    const failure = failedSave(res)
+    setFieldMessages(failure.fields)
+    setFormMessage(failure.form ?? Object.values(failure.fields)[0] ?? 'No pudimos confirmar el documento.')
+  }
+
+  function handleTermSaved(preview: TermPreview) {
+    setTermSheetOpen(false)
+    const unblocked = preview.documents.find((d) => d.id === doc.id)?.willUnblock === true
+    setNotice(
+      unblocked
+        ? 'Plazo guardado. El documento pasó a Sin revisar.'
+        : 'Plazo guardado.',
+    )
+    setFieldMessages({})
+    setFormMessage(null)
+    refreshDoc()
+  }
 
   return (
     <section className="screen">
       {back}
       {alreadyUploaded && <p className="notice callout">Este documento ya estaba subido. No se creó uno nuevo.</p>}
+      {notice && (
+        <p className="notice callout" role="status">
+          {notice}
+        </p>
+      )}
       <div className="document-heading">
         {title !== null && <h1>{title}</h1>}
         <span className={`badge review-${doc.reviewStatus}`}>{REVIEW_STATUS_LABELS[doc.reviewStatus]}</span>
       </div>
 
-      {doc.reviewStatus === 'error' && (
+      {doc.reviewStatus === 'error' && !showExtractionFailedCard && (
         <div className="callout error-callout">
           <p>
             <strong>No cuenta en el saldo. No admite pagos.</strong>
@@ -137,37 +276,179 @@ function Documento() {
         </>
       )}
 
-      {tabbed && (
-        <div className="tabs" role="tablist" aria-label="Ver">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'datos'}
-            className={tab === 'datos' ? 'tab selected' : 'tab'}
-            onClick={() => setTab('datos')}
-          >
-            Datos
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'foto'}
-            className={tab === 'foto' ? 'tab selected' : 'tab'}
-            onClick={() => setTab('foto')}
-          >
-            Foto ({count})
-          </button>
-        </div>
+      {showExtractionFailedCard && (
+        <>
+          {count > 0 && <Pages doc={doc} />}
+          <div className="card resolver-group">
+            <p>
+              <strong>No pudimos leer el documento.</strong>
+            </p>
+            {formMessage && (
+              <p role="alert" className="error">
+                {formMessage}
+              </p>
+            )}
+            <div className="buttons">
+              <button type="button" disabled={saving} onClick={() => void handleRetry()}>
+                {saving ? 'Reintentando…' : 'Reintentar'}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={saving}
+                onClick={() => setManualMode(true)}
+              >
+                Cargar a mano
+              </button>
+              {!confirmDiscard ? (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={saving}
+                  onClick={() => setConfirmDiscard(true)}
+                >
+                  Descartar
+                </button>
+              ) : (
+                <div className="inline-panel">
+                  <p className="muted">¿Descartar este documento?</p>
+                  <div className="pair-buttons">
+                    <button type="button" disabled={saving} onClick={() => void handleDiscard()}>
+                      Confirmar descarte
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={saving}
+                      onClick={() => setConfirmDiscard(false)}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
       )}
 
-      {!processing && (!tabbed || tab === 'datos') && <Datos doc={doc} />}
-      {tabbed && tab === 'foto' && <Pages doc={doc} />}
+      {!showExtractionFailedCard && (
+        <>
+          {tabbed && (
+            <div className="tabs" role="tablist" aria-label="Ver">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'datos'}
+                className={tab === 'datos' ? 'tab selected' : 'tab'}
+                onClick={() => setTab('datos')}
+              >
+                Datos
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === 'foto'}
+                className={tab === 'foto' ? 'tab selected' : 'tab'}
+                onClick={() => setTab('foto')}
+              >
+                Foto ({count})
+              </button>
+            </div>
+          )}
+
+          {!processing && (!tabbed || tab === 'datos') && (
+            <DatosForm
+              doc={doc}
+              values={values}
+              suppliers={suppliers}
+              saving={saving}
+              confirmDiscard={confirmDiscard}
+              fieldMessages={fieldMessages}
+              formMessage={formMessage}
+              onChange={(next) => {
+                setEditState({ docId: doc.id, values: next })
+                setNotice(null)
+              }}
+              onSave={async () => {
+                setFormMessage(null)
+                setNotice(null)
+                const built = buildUpdatePayload(values)
+                if (!built.ok) {
+                  setFieldMessages(localError(built.field, built.code))
+                  return
+                }
+                setSaving(true)
+                const res = await updateDocument(doc.id, built.input)
+                setSaving(false)
+                if (res.ok) {
+                  setFieldMessages({})
+                  setFormMessage(null)
+                  setManualMode(false)
+                  setNotice('Guardado en Revisado.')
+                  refreshDoc()
+                  return
+                }
+                const failure = failedSave(res)
+                setFieldMessages(failure.fields)
+                if (doc.reviewStatus !== 'error') {
+                  setFormMessage(
+                    failure.form ??
+                      'No se guardó. Este documento no puede quedar con errores. Corregí lo marcado o deshacé los cambios.',
+                  )
+                } else {
+                  setFormMessage(failure.form)
+                }
+              }}
+              onReview={() => void handleReview()}
+              onUndo={() => {
+                setEditState({ docId: doc.id, values: initialEditValues(doc) })
+                setFieldMessages({})
+                setFormMessage(null)
+              }}
+              onOpenTermSheet={() => setTermSheetOpen(true)}
+              onRequestDiscard={() => setConfirmDiscard(true)}
+              onCancelDiscard={() => setConfirmDiscard(false)}
+              onConfirmDiscard={() => void handleDiscard()}
+            />
+          )}
+          {tabbed && tab === 'foto' && <Pages doc={doc} />}
+        </>
+      )}
 
       {count === 0 && <p className="muted">Este documento se cargó a mano y no tiene fotos.</p>}
 
-      <p className="muted">
-        {by} {doc.createdByName} · {formatDate(doc.createdOn)} {doc.createdTime}
-      </p>
+      <div className="provenance">
+        <p className="muted">
+          {by} {doc.createdByName} · {formatDate(doc.createdOn)} {doc.createdTime}
+        </p>
+        {doc.reviewedByName !== null && doc.reviewedOn !== null && doc.reviewedTime !== null ? (
+          <p className="muted">
+            Revisado por {doc.reviewedByName} · {formatDate(doc.reviewedOn)} {doc.reviewedTime}
+          </p>
+        ) : (
+          doc.reviewStatus === 'unreviewed' && (
+            <p className="muted">Leído automáticamente · pasó todos los controles</p>
+          )
+        )}
+      </div>
+
+      {termSheetOpen && doc.supplier !== null && (
+        <TermSheet
+          supplierId={doc.supplier.id}
+          supplierName={doc.supplier.name}
+          suggestedTermDays={doc.suggestedTermDays}
+          onSaved={handleTermSaved}
+          onClose={() => setTermSheetOpen(false)}
+          onManualDueDate={() => {
+            setTermSheetOpen(false)
+            setEditState({
+              docId: doc.id,
+              values: { ...values, dueDateSource: 'manual' },
+            })
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -194,11 +475,6 @@ function money(amount: string | null): string {
   return amount === null ? MISSING : formatMoney(amount)
 }
 
-function letterAndNumber(doc: DocumentDetail): string {
-  const parts = [doc.letter, doc.number].filter((part) => part !== null)
-  return parts.length === 0 ? MISSING : parts.join(' · ')
-}
-
 /** "4 un × $ 6.198,35", or null without a quantity or a unit price. */
 function lineAmounts(line: DocumentLine): string | null {
   if (line.quantity === null || line.unitPrice === null) return null
@@ -206,59 +482,413 @@ function lineAmounts(line: DocumentLine): string | null {
   return `${quantity} × $${NBSP}${formatDecimal(line.unitPrice, 2)}`
 }
 
-/** *Datos*, read-only. A missing value shows "—". */
-function Datos({ doc }: { doc: DocumentDetail }) {
+interface DatosFormProps {
+  doc: DocumentDetail
+  values: DocumentEditValues
+  suppliers: ApiResult<SupplierList> | null
+  saving: boolean
+  confirmDiscard: boolean
+  fieldMessages: FieldMessages
+  formMessage: string | null
+  onChange: (next: DocumentEditValues) => void
+  onSave: () => void
+  onReview: () => void
+  onUndo: () => void
+  onOpenTermSheet: () => void
+  onRequestDiscard: () => void
+  onCancelDiscard: () => void
+  onConfirmDiscard: () => void
+}
+
+function DatosForm({
+  doc,
+  values,
+  suppliers,
+  saving,
+  confirmDiscard,
+  fieldMessages,
+  formMessage,
+  onChange,
+  onSave,
+  onReview,
+  onUndo,
+  onOpenTermSheet,
+  onRequestDiscard,
+  onCancelDiscard,
+  onConfirmDiscard,
+}: DatosFormProps) {
+  const ids = useId()
+  const dueDateInputRef = useRef<HTMLInputElement>(null)
+  const locked = isAppliedLocked(doc)
+  const dirty = isEditDirty(doc, values)
+  const allowedTypes = allowedTypesForSource(doc.source)
+  const supplierList = suppliers?.ok ? suppliers.value.suppliers : []
+  const selectedSupplier = supplierList.find((s) => s.id === values.supplierId)
+  const supplierTermDays =
+    selectedSupplier !== undefined
+      ? selectedSupplier.paymentTermDays
+      : doc.supplier?.id === values.supplierId
+        ? doc.supplier.paymentTermDays
+        : null
+
+  const isOpening = values.type === 'opening_balance'
+  const isCreditNote = values.type === 'credit_note'
+  const hasDueDate = !isCreditNote
+
+  const set = <K extends keyof DocumentEditValues>(field: K, value: DocumentEditValues[K]) => {
+    onChange({ ...values, [field]: value })
+  }
+
+  function handleSupplierChange(nextSupplierId: string) {
+    const nextSupplier = supplierList.find((s) => s.id === nextSupplierId)
+    let nextDueDateSource = values.dueDateSource
+    if (values.type === 'invoice' || values.type === 'delivery_note') {
+      if (nextSupplier?.paymentTermDays !== null && nextSupplier?.paymentTermDays !== undefined) {
+        if (nextDueDateSource === null) nextDueDateSource = 'supplier_term'
+      }
+    }
+    onChange({ ...values, supplierId: nextSupplierId, dueDateSource: nextDueDateSource })
+  }
+
+  function handleTypeChange(nextType: DocumentType) {
+    let nextDueDateSource = values.dueDateSource
+    let nextDueDate = values.dueDate
+    if (nextType === 'credit_note') {
+      nextDueDateSource = null
+      nextDueDate = ''
+    } else if (nextType === 'opening_balance') {
+      nextDueDateSource = nextDueDate.trim() !== '' ? 'manual' : null
+    } else if (nextDueDateSource === null) {
+      nextDueDateSource = supplierTermDays !== null ? 'supplier_term' : null
+    }
+    onChange({ ...values, type: nextType, dueDateSource: nextDueDateSource, dueDate: nextDueDate })
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    onSave()
+  }
+
+  const showTermBanner =
+    doc.reviewStatus === 'error' &&
+    doc.issues.includes('supplier_term_missing') &&
+    doc.supplier !== null &&
+    values.supplierId === doc.supplier.id &&
+    values.dueDateSource !== 'manual'
+
+  const termDueLabel =
+    doc.dueDate !== null &&
+    values.issueDate === doc.issueDate &&
+    values.supplierId === doc.supplier?.id &&
+    doc.dueDateSource === 'supplier_term'
+      ? formatDate(doc.dueDate)
+      : 'Se calcula al guardar'
+
   return (
     <>
-      <dl className="data-list">
-        <div>
-          <dt>Proveedor</dt>
-          <dd>
-            {doc.supplier === null ? MISSING : <Link to={`/proveedores/${doc.supplier.id}`}>{doc.supplier.name}</Link>}
-          </dd>
-        </div>
-        <div>
-          <dt>Tipo</dt>
-          <dd>{doc.type === null ? MISSING : DOCUMENT_TYPE_LABELS[doc.type]}</dd>
-        </div>
-        <div>
-          <dt>Letra · Número</dt>
-          <dd>{letterAndNumber(doc)}</dd>
-        </div>
-        <div>
-          <dt>Fecha de emisión</dt>
-          <dd>{doc.issueDate === null ? MISSING : formatDate(doc.issueDate)}</dd>
-        </div>
-        <div>
-          <dt>Vencimiento</dt>
-          <dd>
-            {doc.dueDate === null ? MISSING : formatDate(doc.dueDate)}
-            {doc.dueDateSource !== null && <span className="hint">{DUE_DATE_SOURCE_LABELS[doc.dueDateSource]}</span>}
-          </dd>
-        </div>
-        <div>
-          <dt>Subtotal</dt>
-          <dd className="amount">{money(doc.subtotal)}</dd>
-        </div>
-        {doc.taxes.map((tax, index) => (
-          <div key={`${tax.kind}-${tax.label}-${index}`}>
-            <dt>{tax.label}</dt>
-            <dd className="amount">{formatMoney(tax.amount)}</dd>
+      {showTermBanner && doc.supplier !== null && (
+        <div className="card resolver-group">
+          <p>
+            <strong>{doc.supplier.name} no tiene plazo de pago.</strong>
+          </p>
+          {doc.suggestedTermDays !== null && (
+            <p className="muted">El documento dice {doc.suggestedTermDays} días.</p>
+          )}
+          <div className="pair-buttons">
+            <button type="button" onClick={onOpenTermSheet}>
+              Definir plazo
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                set('dueDateSource', 'manual')
+                setTimeout(() => dueDateInputRef.current?.focus(), 0)
+              }}
+            >
+              Vencimiento a mano
+            </button>
           </div>
-        ))}
-        <div>
-          <dt>Total</dt>
-          <dd className="amount strong">{money(doc.total)}</dd>
         </div>
-        <div>
-          <dt>CAE</dt>
-          <dd>{doc.cae ?? MISSING}</dd>
+      )}
+
+      {locked && (
+        <p className="callout muted">
+          Proveedor y tipo no se pueden cambiar porque el documento tiene pagos o créditos aplicados.
+        </p>
+      )}
+
+      {fieldMessages.document && (
+        <p role="alert" className="error">
+          {fieldMessages.document}
+        </p>
+      )}
+
+      <form onSubmit={handleSubmit} noValidate>
+        <Field
+          id={`${ids}-supplier`}
+          label={locked ? 'Proveedor (bloqueado)' : 'Proveedor'}
+          error={fieldMessages.supplierId}
+        >
+          <select
+            id={`${ids}-supplier`}
+            value={values.supplierId}
+            disabled={locked || saving}
+            onChange={(e) => handleSupplierChange(e.target.value)}
+          >
+            <option value="">{suppliers === null ? 'Cargando…' : 'Elegí un proveedor'}</option>
+            {doc.supplier !== null && !supplierList.some((s) => s.id === doc.supplier!.id) && (
+              <option value={doc.supplier.id}>{doc.supplier.name}</option>
+            )}
+            {supplierList.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field id={`${ids}-type`} label={locked ? 'Tipo (bloqueado)' : 'Tipo'}>
+          <select
+            id={`${ids}-type`}
+            value={values.type}
+            disabled={locked || saving}
+            onChange={(e) =>
+              handleTypeChange(allowedTypes.find((t) => t === e.target.value) ?? 'invoice')
+            }
+          >
+            {allowedTypes.map((t) => (
+              <option key={t} value={t}>
+                {DOCUMENT_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        {!isOpening && (
+          <div className="pair">
+            <Field id={`${ids}-letter`} label="Letra">
+              <select
+                id={`${ids}-letter`}
+                value={values.letter}
+                disabled={saving}
+                onChange={(e) => set('letter', e.target.value)}
+              >
+                <option value="">—</option>
+                {LETTERS.map((letter) => (
+                  <option key={letter} value={letter}>
+                    {letter}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field id={`${ids}-number`} label="Número" error={fieldMessages.number}>
+              <input
+                id={`${ids}-number`}
+                value={values.number}
+                disabled={saving}
+                onChange={(e) => set('number', e.target.value)}
+              />
+            </Field>
+          </div>
+        )}
+
+        <Field
+          id={`${ids}-issue`}
+          label={isOpening ? 'Fecha' : 'Fecha de emisión'}
+          error={fieldMessages.issueDate}
+        >
+          <input
+            id={`${ids}-issue`}
+            type="date"
+            value={values.issueDate}
+            disabled={saving}
+            onChange={(e) => set('issueDate', e.target.value)}
+          />
+        </Field>
+
+        {hasDueDate && (
+          <Field id={`${ids}-due`} label="Vencimiento" error={fieldMessages.dueDate}>
+            {isOpening ? (
+              <>
+                <input
+                  id={`${ids}-due`}
+                  type="date"
+                  value={values.dueDate}
+                  disabled={saving}
+                  onChange={(e) => set('dueDate', e.target.value)}
+                />
+                <span className="hint">Si no tiene vencimiento, cuenta como sin vencer.</span>
+              </>
+            ) : values.dueDateSource === 'manual' ? (
+              <>
+                <input
+                  ref={dueDateInputRef}
+                  id={`${ids}-due`}
+                  type="date"
+                  value={values.dueDate}
+                  disabled={saving}
+                  onChange={(e) => set('dueDate', e.target.value)}
+                />
+                <span className="hint">
+                  Ingresado a mano.{' '}
+                  {supplierTermDays !== null && (
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => onChange({ ...values, dueDateSource: 'supplier_term', dueDate: '' })}
+                    >
+                      Usar plazo del proveedor ({supplierTermDays} días)
+                    </button>
+                  )}
+                </span>
+              </>
+            ) : values.dueDateSource === 'supplier_term' ? (
+              <>
+                <input id={`${ids}-due`} type="text" value={termDueLabel} readOnly disabled />
+                <span className="hint">
+                  Según el plazo del proveedor
+                  {supplierTermDays !== null ? ` (${supplierTermDays} días)` : ''}.{' '}
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => {
+                      set('dueDateSource', 'manual')
+                      setTimeout(() => dueDateInputRef.current?.focus(), 0)
+                    }}
+                  >
+                    Cambiar a mano
+                  </button>
+                </span>
+              </>
+            ) : (
+              <>
+                <input id={`${ids}-due`} type="text" value="Falta plazo o vencimiento" readOnly disabled />
+                <span className="hint">
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => {
+                      set('dueDateSource', 'manual')
+                      setTimeout(() => dueDateInputRef.current?.focus(), 0)
+                    }}
+                  >
+                    Ingresar vencimiento a mano
+                  </button>
+                  {doc.supplier !== null && values.supplierId === doc.supplier.id && (
+                    <>
+                      {' · '}
+                      <button type="button" className="link" onClick={onOpenTermSheet}>
+                        Definir plazo
+                      </button>
+                    </>
+                  )}
+                </span>
+              </>
+            )}
+          </Field>
+        )}
+
+        {!isOpening && (
+          <Field id={`${ids}-subtotal`} label="Subtotal" error={fieldMessages.subtotal}>
+            <input
+              id={`${ids}-subtotal`}
+              inputMode="decimal"
+              placeholder="Opcional"
+              value={values.subtotal}
+              disabled={saving}
+              onChange={(e) => set('subtotal', e.target.value)}
+            />
+          </Field>
+        )}
+
+        {doc.taxes.length > 0 && (
+          <dl className="data-list">
+            {doc.taxes.map((tax, index) => (
+              <div key={`${tax.kind}-${tax.label}-${index}`}>
+                <dt>{tax.label}</dt>
+                <dd className="amount">{formatMoney(tax.amount)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        <Field id={`${ids}-total`} label="Total" error={fieldMessages.total}>
+          <input
+            id={`${ids}-total`}
+            inputMode="decimal"
+            placeholder="$ 0,00"
+            value={values.total}
+            disabled={saving}
+            onChange={(e) => set('total', e.target.value)}
+          />
+          {locked && (
+            <span className="hint">
+              No puede ser menor que lo ya aplicado: {formatMoney(doc.appliedAmount)}.
+            </span>
+          )}
+        </Field>
+
+        <dl className="data-list">
+          <div>
+            <dt>CAE</dt>
+            <dd>{doc.cae ?? MISSING}</dd>
+          </div>
+        </dl>
+
+        <Field id={`${ids}-notes`} label="Notas">
+          <textarea
+            id={`${ids}-notes`}
+            value={values.notes}
+            disabled={saving}
+            onChange={(e) => set('notes', e.target.value)}
+          />
+        </Field>
+
+        {formMessage && (
+          <p role="alert" className="error">
+            {formMessage}
+          </p>
+        )}
+
+        <div className="buttons">
+          {doc.reviewStatus === 'unreviewed' && !dirty ? (
+            <button type="button" disabled={saving} onClick={onReview}>
+              {saving ? 'Confirmando…' : 'Marcar como revisado'}
+            </button>
+          ) : (
+            <button type="submit" disabled={saving || (doc.reviewStatus === 'reviewed' && !dirty)}>
+              {saving ? 'Guardando…' : 'Guardar'}
+            </button>
+          )}
+
+          {dirty && (
+            <button type="button" className="secondary" disabled={saving} onClick={onUndo}>
+              Deshacer
+            </button>
+          )}
+
+          {!locked && !confirmDiscard && (
+            <button type="button" className="secondary" disabled={saving} onClick={onRequestDiscard}>
+              Descartar
+            </button>
+          )}
         </div>
-        <div>
-          <dt>Notas</dt>
-          <dd>{doc.notes ?? MISSING}</dd>
-        </div>
-      </dl>
+
+        {!locked && confirmDiscard && (
+          <div className="inline-panel">
+            <p className="muted">¿Descartar este documento? Deja de aparecer en el sistema.</p>
+            <div className="pair-buttons">
+              <button type="button" disabled={saving} onClick={onConfirmDiscard}>
+                {saving ? 'Descartando…' : 'Confirmar descarte'}
+              </button>
+              <button type="button" className="secondary" disabled={saving} onClick={onCancelDiscard}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </form>
 
       {doc.lines.length > 0 && (
         <details className="document-lines">
@@ -279,8 +909,6 @@ function Datos({ doc }: { doc: DocumentDetail }) {
           </ul>
         </details>
       )}
-
-      {doc.reviewStatus === 'unreviewed' && <p className="muted">Leído automáticamente · pasó todos los controles</p>}
     </>
   )
 }
