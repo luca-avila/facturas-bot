@@ -16,6 +16,11 @@ export type FieldErrorCode =
   | 'subtotal_invalid'
   | 'total_invalid'
   | 'duplicate_number'
+  | 'duplicate_suspected'
+  | 'totals_mismatch'
+  | 'lines_mismatch'
+  | 'wrong_recipient'
+  | 'issue_not_acceptable'
   | 'not_editable'
   | 'amount_invalid'
   | 'paid_on_invalid'
@@ -34,6 +39,7 @@ export type FieldErrorCode =
 export interface FieldError {
   field: string;
   code: FieldErrorCode;
+  documentId?: string;
 }
 
 /** 400 `{ errors }`. With no errors, it means a malformed request. */
