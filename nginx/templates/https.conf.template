@@ -1,0 +1,83 @@
+server_tokens off;
+client_max_body_size 1m;
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=10r/m;
+
+server {
+    listen 80 default_server;
+    server_name ${APP_DOMAIN} _;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://${APP_DOMAIN}$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name ${APP_DOMAIN} _;
+
+    ssl_certificate /etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${APP_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    ssl_session_tickets off;
+
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    set $backend_upstream http://backend:3000;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    location = /uploads {
+        return 404;
+    }
+
+    location ^~ /uploads/ {
+        return 404;
+    }
+
+    location = /api/auth/login {
+        limit_req zone=login_limit burst=10 nodelay;
+        limit_req_status 429;
+        include /etc/nginx/snippets/proxy-params.conf;
+        proxy_pass $backend_upstream;
+    }
+
+    location = /api/uploads {
+        client_max_body_size 75m;
+        include /etc/nginx/snippets/proxy-params.conf;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_pass $backend_upstream;
+    }
+
+    location ^~ /api/ {
+        include /etc/nginx/snippets/proxy-params.conf;
+        proxy_pass $backend_upstream;
+    }
+
+    location = /index.html {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location ^~ /assets/ {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
