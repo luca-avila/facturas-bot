@@ -97,6 +97,10 @@ CERTBOT_ARGS=(
 if [ "$STAGING" -eq 1 ]; then
   echo "==> Using Let's Encrypt staging environment (--staging)."
   CERTBOT_ARGS+=(--staging)
+elif compose run --rm --no-deps --entrypoint /bin/sh certbot \
+  -c 'grep -q "acme-staging" "/etc/letsencrypt/renewal/$1.conf" 2>/dev/null' _ "$APP_DOMAIN"; then
+  echo "==> Replacing existing staging certificate for ${APP_DOMAIN} with a production certificate..."
+  CERTBOT_ARGS+=(--force-renewal)
 fi
 
 echo "==> Requesting Let's Encrypt certificate for ${APP_DOMAIN}..."
