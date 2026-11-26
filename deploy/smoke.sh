@@ -227,6 +227,12 @@ pass "GET /uploads/* returns 404"
 if [ -n "$EMAIL" ]; then
   if [ -n "${SMOKE_PASSWORD:-}" ]; then
     PASSWORD="$SMOKE_PASSWORD"
+  elif [ -t 0 ]; then
+    if ! IFS= read -r -s -p "Password for ${EMAIL}: " PASSWORD; then
+      printf '\n' >&2
+      fail "No password provided via SMOKE_PASSWORD or stdin"
+    fi
+    printf '\n' >&2
   else
     if ! IFS= read -r PASSWORD; then
       fail "No password provided via SMOKE_PASSWORD or stdin"
@@ -238,10 +244,10 @@ if [ -n "$EMAIL" ]; then
   LOGIN_PAYLOAD="$(printf '{"email":"%s","password":"%s"}' "$(json_escape "$EMAIL")" "$(json_escape "$PASSWORD")")"
   unset PASSWORD
 
-  STATUS="$("${CURL_BASE[@]}" \
+  STATUS="$(printf '%s' "$LOGIN_PAYLOAD" | "${CURL_BASE[@]}" \
     -X POST \
     -H "Content-Type: application/json" \
-    --data-binary "$LOGIN_PAYLOAD" \
+    --data-binary @- \
     -c "$COOKIE_JAR" \
     -D "$H_FILE" \
     -o "$B_FILE" \
