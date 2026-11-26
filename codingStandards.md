@@ -33,7 +33,7 @@ Check: code that writes `due_date` from extraction output.
 ## Concurrency
 
 ### C1. A check still holds when its write lands
-A read that decides a write, such as a limit, what's left to apply or a duplicate, comes after a lock on what it read, or runs in the same synchronous step that records the write, or is backed by a constraint. Locks follow the one order in `agents.md`: an existing payment first, then every document in one `ORDER BY id FOR UPDATE`. A response built from several reads takes them in one snapshot.
+A read that decides a write, such as a limit, what's left to apply or a duplicate, comes after a lock on what it read, or runs in the same synchronous step that records the write, or is backed by a constraint. Locks follow the orders in `agents.md`. A response built from several reads takes them in one snapshot.
 Why: parallel sign-ins got past the rate limit, a supplier's figures disagreed with its own document list, and two saves deadlocked. Each passed its tests, and each was found in review.
 Check: an `await` between a check and the write it guards, a `FOR UPDATE` outside that order, or a response built from two queries outside one transaction.
 
