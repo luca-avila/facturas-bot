@@ -388,7 +388,14 @@ for i in $(seq 1 15); do
   fi
 done
 [ "$HIT_429" -eq 1 ] || fail "Expected nginx login rate limit to return 429 after burst overflow"
-pass "Nginx login rate limit enforces 429 on burst overflow"
+
+for variant in "/api/auth/login/" "/api/auth/LOGIN"; do
+  CODE="$("${CURL_HTTPS[@]}" -X POST -H "Content-Type: application/json" \
+    -d '{"email":"ratelimit-variant@example.com","password":"not-a-real-password"}' \
+    -o /dev/null -w '%{http_code}' "${HTTPS_BASE}${variant}")"
+  [ "$CODE" = "429" ] || fail "Expected nginx login rate limit to return 429 on ${variant}, got ${CODE}"
+done
+pass "Nginx login rate limit enforces 429 on burst overflow (including trailing-slash and case variants)"
 
 echo ""
 echo "ALL PRODUCTION STACK VERIFICATIONS PASSED."

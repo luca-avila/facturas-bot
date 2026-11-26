@@ -49,13 +49,6 @@ server {
         return 404;
     }
 
-    location = /api/auth/login {
-        limit_req zone=login_limit burst=10 nodelay;
-        limit_req_status 429;
-        include /etc/nginx/snippets/proxy-params.conf;
-        proxy_pass $backend_upstream;
-    }
-
     location = /api/uploads {
         client_max_body_size 75m;
         include /etc/nginx/snippets/proxy-params.conf;
@@ -67,6 +60,13 @@ server {
     location ^~ /api/ {
         include /etc/nginx/snippets/proxy-params.conf;
         proxy_pass $backend_upstream;
+
+        location ~* ^/api/auth/login/?$ {
+            limit_req zone=login_limit burst=10 nodelay;
+            limit_req_status 429;
+            include /etc/nginx/snippets/proxy-params.conf;
+            proxy_pass $backend_upstream;
+        }
     }
 
     location = /index.html {
