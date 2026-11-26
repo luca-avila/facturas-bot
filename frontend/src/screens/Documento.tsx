@@ -543,8 +543,16 @@ function DatosForm({
     const nextSupplier = supplierList.find((s) => s.id === nextSupplierId)
     let nextDueDateSource = values.dueDateSource
     if (values.type === 'invoice' || values.type === 'delivery_note') {
-      if (nextSupplier?.paymentTermDays !== null && nextSupplier?.paymentTermDays !== undefined) {
+      const hasTerm = nextSupplier?.paymentTermDays !== null && nextSupplier?.paymentTermDays !== undefined
+      const preservesOriginalTerm =
+        nextSupplierId === doc.supplier?.id && doc.dueDateSource === 'supplier_term' && doc.dueDate !== null
+      if (hasTerm || preservesOriginalTerm) {
         if (nextDueDateSource === null) nextDueDateSource = 'supplier_term'
+      } else if (
+        nextDueDateSource === 'supplier_term' &&
+        (nextSupplierId === '' || nextSupplier !== undefined)
+      ) {
+        nextDueDateSource = null
       }
     }
     onChange({ ...values, supplierId: nextSupplierId, dueDateSource: nextDueDateSource })
