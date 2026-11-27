@@ -160,7 +160,78 @@ npm run user:disable -- --email ana@example.com
 
 ## Deployment
 
-The app runs on a VPS with Docker Compose. Nginx sits in front as a reverse proxy, Certbot handles HTTPS certificates, and the extraction worker runs in its own container.
+The app runs on a single VPS with Docker Compose (`docker-compose.prod.yml`), keeping `docker-compose.yml` untouched for local development and tests. Nginx terminates TLS and serves the built frontend SPA plus `/api/*` (it never mounts uploaded photos), Certbot renews certificates automatically, and the extraction worker runs in its own container with strict environment separation (`backend` never receives `ANTHROPIC_API_KEY`; `worker` never receives `JWT_SECRET`).
+
+> **Warning — off-VPS backups are not configured yet.** Automated nightly backups (`pg_dump` + `UPLOAD_DIR`) and restore scripts are deferred out of the MVP for a dedicated follow-up slice. Postgres data (`db-data`) and uploaded photos (`uploads-data`) currently live only in persistent Docker volumes on the VPS disk. **Never run `docker compose ... down -v` in production**, as `-v` deletes those volumes permanently.
+
+### 1. Prepare environment and DNS
+
+Point your domain's DNS `A` (and optional `AAAA`) record to the VPS and open ports `80` and `443` in the firewall. On the VPS:
+
+```bash
+cp .env.production.example .env.production
+chmod 600 .env.production
+```
+
+Fill in every variable in `.env.production`:
+
+- `APP_DOMAIN`: public hostname (e.g., `facturas.example.com`)
+- `CERTBOT_EMAIL`: email for Let's Encrypt notices
+- `POSTGRES_USER`, `POSTGRES_DB`, `POSTGRES_PASSWORD`: generate `POSTGRES_PASSWORD` with `openssl rand -hex 24` (URL-safe characters only)
+- `JWT_SECRET`: generate with `openssl rand -base64 48` (at least 32 characters)
+- `ANTHROPIC_API_KEY`, `LLM_MODEL`, `RESTAURANT_CUIT`: worker-only extraction settings
+
+### 2. Provision the first TLS certificate (Certbot bootstrap)
+
+Before the first certificate exists, nginx automatically starts in safe HTTP-only mode serving only `/.well-known/acme-challenge/` and returning `503` everywhere else so login credentials and `/api` are never exposed over plain HTTP. Run once on a fresh VPS:
+
+```bash
+./deploy/init-cert.sh
+```
+
+Use `./deploy/init-cert.sh --staging` first if you want to verify DNS and ACME without hitting Let's Encrypt production rate limits. Once issued, `init-cert.sh` restarts nginx into HTTPS mode and starts the `certbot` container (which renews every 12 hours; nginx reloads every 6 hours without Docker socket access).
+
+### 3. Run migrations and start the stack
+
+Migrations never run implicitly on container start; run them explicitly on every deploy:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d db
+docker compose -f docker-compose.prod.yml --env-file .env.production --profile ops run --rm --build migrate
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+### 4. Manage accounts on the server
+
+Use the compiled production scripts inside the `backend` container (no `devDependencies` required):
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production exec backend \
+  npm run user:create:prod -- --email ana@example.com --name Ana --role admin
+
+docker compose -f docker-compose.prod.yml --env-file .env.production exec backend \
+  npm run user:reset-password:prod -- --email ana@example.com
+
+docker compose -f docker-compose.prod.yml --env-file .env.production exec backend \
+  npm run user:disable:prod -- --email ana@example.com
+```
+
+### 5. Verify every deploy
+
+Run the read-only smoke script after each deploy (creates no documents or uploads and triggers zero LLM calls):
+
+```bash
+./deploy/smoke.sh --domain facturas.example.com
+
+# Optional: also verify sign-in, cookie flags, authenticated reads, and sign-out
+./deploy/smoke.sh --domain facturas.example.com --email ana@example.com
+```
+
+To verify the full production Docker Compose stack locally before deploying (isolated Compose project, self-signed TLS, unprivileged ports `18080`/`18443`, `RESTAURANT_TEST_CUIT`, zero external calls, automatic cleanup):
+
+```bash
+./deploy/verify-stack.sh
+```
 
 ## Development workflow
 

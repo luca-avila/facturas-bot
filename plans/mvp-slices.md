@@ -334,7 +334,7 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 
 ## 8. Production with backups
 
-**Goal.** Restaurant staff use the app over HTTPS from their phones, and nightly backups have been restored at least once.
+**Goal.** Restaurant staff use the app over HTTPS from their phones, accounts are managed on the server, and each deploy is verified by a smoke script. Automated off-VPS backups and restore are deferred out of the MVP by user decision ([question 16](#open-questions)).
 
 **Design.** [Operations](../system-design.md#operations), and Worker in [Extraction](../system-design.md#extraction).
 
@@ -344,23 +344,22 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
 - Now:
   - Docker Compose runs nginx, the backend, the worker and Postgres, with Certbot for HTTPS.
   - `UPLOAD_DIR` lives on a volume.
-  - Every night, a `pg_dump` and a copy of `UPLOAD_DIR` go to storage outside the VPS ([question 16](#open-questions)).
-  - There's a restore script.
   - The user scripts run on the server.
+- Later (deferred out of MVP):
+  - Nightly `pg_dump` and a copy of `UPLOAD_DIR` to storage outside the VPS, plus a restore script and restore drill ([question 16](#open-questions)).
 
 **Acceptance.**
 1. Sign in from a phone over HTTPS. Plain HTTP redirects to HTTPS.
 2. Upload a document and see it reach *Sin revisar* or *Error*.
-3. Restore last night's backup into a fresh database and folder. *Resumen* and the images match.
-4. Images can't be reached as static files.
+3. Images can't be reached as static files.
 
 **Tests.**
 - A smoke script that runs after each deploy.
-- A restore drill that compares row counts and balance totals.
+- An isolated local Docker Compose verification harness covering HTTP-only Certbot bootstrap, HTTPS redirect, security headers, auth cookies, upload/image isolation, secret separation, and server user scripts.
 
-**Out.** Monitoring and alerts, and multi-tenancy.
+**Out.** Nightly backups and restore (deferred out of the MVP for a dedicated follow-up slice), monitoring and alerts, and multi-tenancy.
 
-**Doors.** One-way: backups and restore, authentication exposed to the internet, and the first real data. From here on, migrations run on real data.
+**Doors.** One-way: authentication and documents exposed to the internet, the first real data (from here on, migrations run on real data), and operating without automated off-VPS backups until the follow-up backup slice lands.
 
 ## Order
 
@@ -414,3 +413,4 @@ This slice is split into two `/feature` runs, in [`slice-1-skeleton-and-accounts
     - Answered: the risk is a leftover row, not hidden debt. A new supplier has no term, so its first invoice or delivery note stops in *Error*, where a person sees it. Only a credit note can land on a wrong supplier unseen. If leftover suppliers show up, deleting one with no documents or payments is a small addition.
 15. **Session length** (slice 1b). Answered: a session expires after 30 days without use, and each request renews it.
 16. **Where backups go** (slice 8). The storage outside the VPS isn't chosen yet, and sending backups there is data leaving the system. Where should they go?
+    - Deferred (slice 8): off-VPS nightly `pg_dump` + `UPLOAD_DIR` backups, the restore script, and the restore drill are deferred out of the MVP by user decision. They will be planned in a dedicated follow-up slice once the app is running cleanly in production.

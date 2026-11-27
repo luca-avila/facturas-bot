@@ -1,0 +1,17 @@
+server_tokens off;
+client_max_body_size 1m;
+
+server {
+    listen 80 default_server;
+    server_name ${APP_DOMAIN} _;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    location / {
+        return 503 "TLS certificate not yet provisioned.\n";
+    }
+}

@@ -27,6 +27,9 @@
     "user:create": "tsx scripts/users.ts create",
     "user:reset-password": "tsx scripts/users.ts reset-password",
     "user:disable": "tsx scripts/users.ts disable",
+    "user:create:prod": "node dist/users-cli.js create",
+    "user:reset-password:prod": "node dist/users-cli.js reset-password",
+    "user:disable:prod": "node dist/users-cli.js disable",
     "extraction:test": "tsx scripts/extraction-test.ts"
   },
   "dependencies": {
